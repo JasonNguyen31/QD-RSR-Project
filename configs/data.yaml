@@ -1,6 +1,6 @@
 # configs/data.yaml
 # Thành phần dữ liệu và tên file của Giai đoạn A. Chốt 17/09/2026 (Notion mục P3).
-
+#
 # Lược đồ một dòng trong questions.jsonl (do a1_prepare tạo, a2 và a3 đọc):
 #   qid       chuỗi định danh duy nhất, ví dụ "math-train-0123", "gsm8k-train-0456"
 #   source    "gsm8k" hoặc "math"
@@ -8,22 +8,22 @@
 #   question  đề bài
 #   solution  lời giải tham chiếu của bộ dữ liệu (dùng làm reference cho giám khảo)
 #   gold      đáp án cuối đã tách sẵn (dùng src/common/answers.extract_gold)
-
+#
 # Lược đồ một dòng trong trajectories.jsonl (a2 tạo):
 #   tid = "<qid>|<teacher>|<sample_idx>" (khoá nối mọi bảng điểm về sau)
 #   qid, teacher, sample_idx, text, finish_reason, prompt_tokens, completion_tokens,
-#   cost, latency_s, model_id, served_model, system_prompt_id, ts
+#   cost, latency_s, model_id, served_model, prompt_id, ts
 
 data:
   train_composition:
-    - { source: math, level: 4, n: 800 } # pilot đo 73,0% đúng, vùng phương sai tốt nhất
-    - { source: math, level: 5, n: 600 } # pilot đo 53,7% đúng
-    - { source: math, level: 3, n: 400 } # đệm, giữ dải độ khó liên tục
-    - { source: gsm8k, level: null, n: 200 } # đối chứng bão hoà, dùng để phân tích
-  val: { gsm8k: 100, math: 100 } # tập kiểm định tinh chỉnh lambda
-  pilot: { n: 100, seed: 42 }
-  min_correct_per_question: 3 # cố định theo k=3, giữ nguyên cho cả cấu hình k=1
-  exclude_benchmarks: [math500] # loại trùng, đã kiểm chứng 500/500 trên test và 0/7500 trên train
+    - {source: math,  level: 4,    n: 800}   # pilot đo 73,0% đúng, vùng phương sai tốt nhất
+    - {source: math,  level: 5,    n: 600}   # pilot đo 53,7% đúng
+    - {source: math,  level: 3,    n: 400}   # đệm, giữ dải độ khó liên tục
+    - {source: gsm8k, level: null, n: 200}   # đối chứng bão hoà, dùng để phân tích
+  val: {gsm8k: 100, math: 100}               # tập kiểm định tinh chỉnh lambda
+  pilot: {n: 100, seed: 42}
+  min_correct_per_question: 3                # cố định theo k=3, giữ nguyên cho cả cấu hình k=1
+  exclude_benchmarks: [math500]              # loại trùng, đã kiểm chứng 500/500 trên test và 0/7500 trên train
 
 # Tên file chuẩn trong mỗi thư mục làm việc (workdir). Lô pilot dùng cùng tên trong thư mục riêng,
 # ví dụ data/pilot/run2_boxed/, để mã không phải phân biệt pilot với dữ liệu thật.

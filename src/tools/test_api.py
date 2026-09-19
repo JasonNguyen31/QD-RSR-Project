@@ -28,7 +28,7 @@ def check_teachers(cfg, client: ChatClient) -> int:
     bad = 0
     for t in cfg["teachers"]:
         try:
-            res = client.chat(model=t["model_id"], messages=build_generation_messages(QUESTION, "boxed"),
+            res = client.chat(model=t["model_id"], messages=build_generation_messages(QUESTION, cfg["generation"]["prompt_id"]),
                               temperature=cfg["generation"]["temperature"], top_p=cfg["generation"]["top_p"],
                               max_tokens=400, provider_order=t.get("provider_order") or None)
             has_box = "\\boxed" in res.text

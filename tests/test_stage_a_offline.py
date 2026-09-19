@@ -24,7 +24,8 @@ class FakeClient:
     def chat(self, model, messages, temperature, top_p, max_tokens, provider_order=None):
         self.calls += 1
         self.seen_messages.append(messages)
-        question = messages[-1]["content"]
+        content = messages[-1]["content"]
+        question = next((q for q in self.gold if q in content), content)
         key = (model, question)
         if key in self.fail_once:
             self.fail_once.discard(key)
@@ -74,14 +75,28 @@ def test_config_merge_and_directions(cfg):
         cfg.selection.khong_ton_tai
 
 
-def test_prompt_is_boxed_and_system_role(cfg, workdir):
+def test_default_prompt_follows_rsr_generation_recipe(cfg, workdir):
+    """Bài gốc (A.2) nối chỉ dẫn vào cuối đề bài, vai trò user, không có system prompt."""
+    assert cfg.generation.prompt_id == "rsr"
     qs = read_jsonl(workdir / cfg["stage_a_files"]["questions"])
     client = FakeClient(qs)
     teachers = a2_generate.select_teachers(cfg, ["llama70b"])
     a2_generate.run_generation(cfg, qs[:1], teachers, client, workdir, show_progress=False)
     msgs = client.seen_messages[0]
-    assert msgs[0] == {"role": "system", "content": "Please reason step by step, and put your final answer within \\boxed{}"}
-    assert msgs[1]["role"] == "user" and "####" not in msgs[0]["content"]
+    assert len(msgs) == 1 and msgs[0]["role"] == "user"
+    assert msgs[0]["content"].endswith("Return your final response within \\boxed{}.")
+    assert qs[0]["question"] in msgs[0]["content"] and "####" not in msgs[0]["content"]
+    row = read_jsonl(workdir / cfg["stage_a_files"]["trajectories"])[0]
+    assert row["prompt_id"] == "rsr"
+
+
+def test_legacy_boxed_prompt_still_available():
+    from src.common.prompts import build_generation_messages
+    msgs = build_generation_messages("2+2?", "boxed")
+    assert msgs[0]["role"] == "system" and msgs[1] == {"role": "user", "content": "2+2?"}
+    import pytest as _pytest
+    with _pytest.raises(KeyError):
+        build_generation_messages("2+2?", "khong_ton_tai")
 
 
 def test_generate_resume_and_filter(cfg, workdir):
@@ -155,7 +170,7 @@ def test_budget_guard(cfg, workdir):
 def test_dry_run_makes_no_calls(cfg, workdir, capsys):
     assert a2_generate.main(["--workdir", str(workdir), "--dry-run"]) == 0
     out = capsys.readouterr().out
-    assert "cần sinh 45" in out and "\\boxed{}" in out
+    assert "cần sinh 45" in out and "Return your final response within \\boxed{}." in out
     assert not (workdir / cfg["stage_a_files"]["trajectories"]).exists()
 
 

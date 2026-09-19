@@ -1,5 +1,4 @@
-"""
-a2_generate: sinh chuỗi suy luận từ các mô hình dạy qua OpenRouter (chạy trên máy Mac, thuần gọi mạng).
+"""a2_generate: sinh chuỗi suy luận từ các mô hình dạy qua OpenRouter (chạy trên máy Mac, thuần gọi mạng).
 
 Từ thư mục gốc repo:
 
@@ -27,7 +26,7 @@ from typing import Mapping, Sequence
 from src.common.api import ChatClient, make_openrouter_client
 from src.common.config import load_config, resolve_path
 from src.common.io_utils import JsonlWriter, load_done_keys, now_iso, read_jsonl, traj_id
-from src.common.prompts import build_generation_messages, get_system_prompt
+from src.common.prompts import build_generation_messages, describe_prompt
 
 try:
     from tqdm import tqdm
@@ -72,7 +71,7 @@ def run_generation(
 ) -> dict:
     files = cfg["stage_a_files"]
     gen = cfg["generation"]
-    prompt_id = gen["system_prompt_id"]
+    prompt_id = gen["prompt_id"]
     n_samples = gen["samples_per_teacher"]
     workers = workers or gen["max_workers"]
 
@@ -88,7 +87,7 @@ def run_generation(
     with JsonlWriter(workdir / files["runs"]) as runs_w:
         runs_w.append({
             "ts_start": now_iso(), "argv": sys.argv, "n_tasks": len(tasks), "workers": workers,
-            "system_prompt_id": prompt_id, "system_prompt": get_system_prompt(prompt_id),
+            "prompt_id": prompt_id, "prompt_shape": describe_prompt(prompt_id),
             "temperature": gen["temperature"], "top_p": gen["top_p"], "max_tokens": gen["max_tokens"],
             "teachers": [{"key": t["key"], "model_id": t["model_id"], "provider_order": t.get("provider_order") or []}
                          for t in teachers],
@@ -127,7 +126,7 @@ def run_generation(
                 "prompt_tokens": res.prompt_tokens, "completion_tokens": res.completion_tokens,
                 "cost": res.cost, "latency_s": round(res.latency_s, 2),
                 "model_id": t["model_id"], "served_model": res.served_model,
-                "system_prompt_id": prompt_id, "ts": now_iso(),
+                "prompt_id": prompt_id, "ts": now_iso(),
             })
             return t["key"], "ok", res
 
@@ -213,7 +212,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"[dry-run] workdir={workdir}\n[dry-run] {len(questions)} câu hỏi, mô hình dạy: "
               f"{[t['model_id'] for t in teachers]}\n[dry-run] đã có {len(done)} chuỗi, cần sinh {len(tasks)}")
         print("[dry-run] tin nhắn mẫu cho câu đầu tiên:")
-        for m in build_generation_messages(questions[0]["question"], gen["system_prompt_id"]):
+        print(f"[dry-run] prompt_id={gen['prompt_id']}")
+        for m in build_generation_messages(questions[0]["question"], gen["prompt_id"]):
             print(f"  [{m['role']}] {m['content'][:200]}")
         return 0
 
