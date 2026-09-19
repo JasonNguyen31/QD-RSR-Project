@@ -1,0 +1,32 @@
+# configs/models.yaml
+# Ba mô hình dạy, giám khảo, embedding. Tên biến môi trường chứa khoá nằm ở đây, KHÔNG ghi khoá vào file này.
+# Khoá đặt trong .env ở gốc repo (đã có trong .gitignore).
+
+openrouter:
+  base_url: https://openrouter.ai/api/v1
+  api_key_env: OPENROUTER_API_KEY # đổi nếu .env của bạn dùng tên khác
+  # Nếu gọi thử mà mọi lượt trả BadRequest thì đặt false: đây là trường yêu cầu OpenRouter trả kèm chi phí
+  request_usage_cost: true
+
+# Ngày truy cập và đường truy cập cần ghi vào phần Mô hình sử dụng của paper (bài học ở Notion mục J2).
+teachers:
+  - key: deepseek
+    model_id: deepseek/deepseek-chat # DeepSeek-V3 qua OpenRouter
+    provider_order: [] # để trống = OpenRouter tự chọn nhà cung cấp
+  - key: qwen72b
+    model_id: qwen/qwen-2.5-72b-instruct
+    provider_order: [] # cân nhắc ghim nhà cung cấp nếu tỷ lệ phản hồi rỗng ~5% còn kéo dài
+  - key: llama70b
+    model_id: meta-llama/llama-3.3-70b-instruct
+    provider_order: []
+
+judge:
+  provider: gemini
+  model_id: gemini-3.7-flash
+  compare_model_id: gemini-3.5-flash-lite # theo Notion mục J3, xác nhận lại bằng tools/test_api.py
+  api_key_env: GEMINI_API_KEY # đổi nếu .env dùng tên khác
+
+embedding:
+  model_id: BAAI/bge-m3
+  device: mps # Mac. Bỏ qua nếu chạy nơi khác
+  max_length: 2048
