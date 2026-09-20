@@ -1,5 +1,4 @@
-"""
-a1_prepare: dựng lại kho câu hỏi từ đầu (tải, loại trùng MATH-500, tách tập kiểm định, rút 2.000 câu huấn luyện).
+"""a1_prepare: dựng lại kho câu hỏi từ đầu (tải, loại trùng MATH-500, tách tập kiểm định, rút 2.000 câu huấn luyện).
 
 Thay cho prepare_train_pools.py và verify_dedup.py cũ, giữ NGUYÊN các quy ước đã kiểm chứng:
   - norm(): chỉ gộp khoảng trắng và đổi chữ thường
@@ -213,7 +212,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"    {d['qid']}: ...{d['tail']!r}")
 
     print("\nLoại trừ câu đã dùng cho pilot:")
-    pilot_files = [resolve_path(cfg, p) for p in (args.exclude_pilot or ["data/pilot/questions.jsonl"])]
+    # Lô pilot lần một nằm ở data/pilot/run1_original/ sau khi dọn thư mục ngày 20/09/2026.
+    # Giữ cả đường dẫn cũ để bản dựng lại vẫn khớp nếu ai đó chưa dọn.
+    default_pilot = ["data/pilot/run1_original/questions.jsonl", "data/pilot/questions.jsonl"]
+    if args.exclude_pilot:
+        pilot_files = [resolve_path(cfg, p) for p in args.exclude_pilot]
+    else:
+        pilot_files = [q for q in (resolve_path(cfg, p) for p in default_pilot) if q.exists()]
+        if not pilot_files:
+            pilot_files = [resolve_path(cfg, default_pilot[0])]
     gsm_excl, qid_excl = read_exclusions(pilot_files)
     gsm_all = build_gsm_records(gsm_rows, gsm_excl)
     if qid_excl:
