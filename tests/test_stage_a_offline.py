@@ -111,8 +111,11 @@ def test_generate_resume_and_filter(cfg, workdir):
     files = cfg["stage_a_files"]
     qs = read_jsonl(workdir / files["questions"])
     teachers = a2_generate.select_teachers(cfg, None)
-    # qwen72b lỗi đúng MỘT lượt (mẫu đầu tiên) ở câu math-train-1, hai mẫu còn lại vẫn thành công
-    client = FakeClient(qs, fail_once=[("qwen/qwen-2.5-72b-instruct", "Tính 1+1?")])
+    # qwen72b lỗi đúng MỘT lượt (mẫu đầu tiên) ở câu math-train-1, hai mẫu còn lại vẫn thành công.
+    # Lấy tên mô hình từ CẤU HÌNH chứ không viết cứng: đổi nhà cung cấp hay biến thể mô hình trong
+    # models.yaml là chuyện bình thường, và không được làm hỏng bài kiểm thử.
+    qwen_id = next(t["model_id"] for t in teachers if t["key"] == "qwen72b")
+    client = FakeClient(qs, fail_once=[(qwen_id, "Tính 1+1?")])
     a2_generate.run_generation(cfg, qs, teachers, client, workdir, show_progress=False, workers=2)
     trajs = read_jsonl(workdir / files["trajectories"])
     fails = read_jsonl(workdir / files["failures"])

@@ -14,7 +14,7 @@ teachers:
     model_id: deepseek/deepseek-chat # DeepSeek-V3 qua OpenRouter
     provider_order: [] # để trống = OpenRouter tự chọn nhà cung cấp
   - key: qwen72b
-    model_id: qwen/qwen-2.5-72b-instruct
+    model_id: qwen/qwen2.5-vl-72b-instruct
     provider_order: [] # cân nhắc ghim nhà cung cấp nếu tỷ lệ phản hồi rỗng ~5% còn kéo dài
   - key: llama70b
     model_id: meta-llama/llama-3.3-70b-instruct
