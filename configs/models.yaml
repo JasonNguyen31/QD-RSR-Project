@@ -21,10 +21,22 @@ teachers:
     provider_order: []
 
 judge:
-  provider: gemini
-  model_id: gemini-3.7-flash
-  compare_model_id: gemini-3.5-flash-lite # theo Notion mục J3, xác nhận lại bằng tools/test_api.py
-  api_key_env: GEMINI_API_KEY # đổi nếu .env dùng tên khác
+  # provider: "openrouter" hoặc "gemini" (API riêng của Google).
+  # Chốt 19/09/2026: dùng openrouter. API riêng của Google trả 429 RESOURCE_EXHAUSTED sau vài chục lượt
+  # vì hết hạn mức bậc miễn phí, không đủ cho 18.000 chuỗi. OpenRouter đã có tín dụng và chạy ổn định.
+  # Nguyên tắc thiết kế không đổi: giám khảo vẫn thuộc họ kiến trúc độc lập với cả ba mô hình dạy.
+  provider: openrouter
+  model_id:
+    google/gemini-2.5-flash-lite # [CẦN XÁC NHẬN] tên chính xác trên OpenRouter,
+    # kiểm tra bằng: python -m src.tools.test_api --judge-compare
+  compare_model_id: google/gemini-2.5-flash-lite # [CẦN XÁC NHẬN] bản rẻ hơn để so
+  api_key_env: GEMINI_API_KEY # chỉ dùng khi provider = gemini
+  max_tokens:
+    4000 # nâng dần 1500 -> 3000 -> 4000 ngày 19/09. Trên bài mức 5,
+    # Flash-Lite viết lý giải tới 10.000 ký tự nên JSON bị cắt dở.
+    # Tăng ngưỡng KHÔNG làm tăng chi phí cho phản hồi ngắn,
+    # vì chỉ tính tiền theo token thực sinh ra
+  temperature: 0.0 # chấm điểm nên tất định, khác với lúc sinh chuỗi
 
 embedding:
   model_id: BAAI/bge-m3

@@ -1,5 +1,4 @@
-"""
-Gọi mô hình dạy qua OpenRouter (giao diện tương thích OpenAI), có thử lại và đếm chi phí.
+"""Gọi mô hình dạy qua OpenRouter (giao diện tương thích OpenAI), có thử lại và đếm chi phí.
 
 Sửa hai lỗi đã gặp ở mã pilot cũ (Notion mục R5):
   1. Phản hồi rỗng của Qwen2.5-72B (choices = None hoặc content = None) nay được coi là lỗi có thể thử lại,
@@ -17,8 +16,11 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
 
+from json import JSONDecodeError
+
 from openai import (
     APIConnectionError,
+    APIError,
     AuthenticationError,
     BadRequestError,
     InternalServerError,
@@ -90,8 +92,12 @@ class UsageTracker:
 
 
 _NEVER_RETRY = (AuthenticationError, PermissionDeniedError, NotFoundError)
-_RETRYABLE = (EmptyResponse, APIConnectionError, RateLimitError, InternalServerError, BadRequestError)
+_RETRYABLE = (EmptyResponse, APIConnectionError, RateLimitError, InternalServerError, BadRequestError,
+              JSONDecodeError, APIError)
 # APITimeoutError là lớp con của APIConnectionError nên đã nằm trong nhóm trên.
+# JSONDecodeError thêm 19/09 sau lô pilot run3: nhà cung cấp thỉnh thoảng trả về thân phản hồi không phải JSON
+# hợp lệ, SDK ném thẳng JSONDecodeError. Trước đây lỗi này KHÔNG được thử lại nên mất luôn chuỗi (3 lượt ở run3).
+# APIError là lớp cha của phần lớn lỗi SDK, đặt cuối để hứng các lỗi tạm thời chưa liệt kê ở trên.
 
 
 def _is_retryable(exc: BaseException) -> bool:

@@ -35,6 +35,26 @@ except ImportError:  # tqdm không bắt buộc
         return it
 
 
+def shard_names(files: Mapping, shard: str | None) -> tuple[str, str]:
+    """Tên file chuỗi và file lỗi cho một lô.
+
+    Chạy song song NHIỀU tiến trình cùng ghi vào một file jsonl là KHÔNG an toàn: một dòng chuỗi suy luận
+    thường vượt 4096 byte nên hệ điều hành không đảm bảo ghi nối nguyên vẹn, các dòng có thể lồng vào nhau.
+    Vì vậy mỗi tiến trình phải ghi ra file riêng qua --shard, rồi a3_filter đọc gộp tất cả.
+    """
+    if not shard:
+        return files["trajectories"], files["failures"]
+    return (files["trajectories"].replace(".jsonl", f".{shard}.jsonl"),
+            files["failures"].replace(".jsonl", f".{shard}.jsonl"))
+
+
+def all_trajectory_files(workdir: Path, files: Mapping) -> list[Path]:
+    """File chuỗi chính cộng mọi file lô, để việc chạy bù thấy được phần các lô khác đã sinh."""
+    base = files["trajectories"]
+    stem = base.replace(".jsonl", "")
+    return sorted(set([workdir / base] + list(workdir.glob(f"{stem}.*.jsonl"))))
+
+
 def select_teachers(cfg: Mapping, keys: Sequence[str] | None) -> list[dict]:
     teachers = [dict(t) for t in cfg["teachers"]]
     if keys:
@@ -67,6 +87,7 @@ def run_generation(
     *,
     max_cost: float | None = None,
     workers: int | None = None,
+    shard: str | None = None,
     show_progress: bool = True,
 ) -> dict:
     files = cfg["stage_a_files"]
@@ -75,12 +96,18 @@ def run_generation(
     n_samples = gen["samples_per_teacher"]
     workers = workers or gen["max_workers"]
 
-    traj_path, fail_path = workdir / files["trajectories"], workdir / files["failures"]
-    done = load_done_keys(traj_path, lambda r: r["tid"])
+    traj_name, fail_name = shard_names(files, shard)
+    traj_path, fail_path = workdir / traj_name, workdir / fail_name
+    done: set[str] = set()
+    for p in all_trajectory_files(workdir, files):
+        done |= load_done_keys(p, lambda r: r["tid"])
     tasks = build_tasks(questions, teachers, n_samples, done)
 
     print(f"[a2] {len(questions)} câu hỏi x {len(teachers)} mô hình dạy x {n_samples} mẫu = "
-          f"{len(questions) * len(teachers) * n_samples} chuỗi cần có; đã có {len(done)}; cần sinh {len(tasks)}")
+          f"{len(questions) * len(teachers) * n_samples} chuỗi cần có; đã có {len(done)} (tính cả các lô khác); "
+          f"cần sinh {len(tasks)}")
+    if shard:
+        print(f"[a2] lô '{shard}': ghi vào {traj_name}")
     if not tasks:
         return {"tasks": 0}
 
@@ -188,6 +215,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--limit-questions", type=int, help="chỉ lấy N câu hỏi đầu, dùng để chạy thử")
     ap.add_argument("--max-cost", type=float, help="dừng khi chi phí cộng dồn (USD) chạm mức này")
     ap.add_argument("--workers", type=int, help="số luồng, mặc định generation.max_workers")
+    ap.add_argument("--shard", help="tên lô, ví dụ deepseek. Ghi ra trajectories.<lô>.jsonl để chạy song song "
+                                    "nhiều tiến trình an toàn. a3_filter tự đọc gộp mọi lô.")
     ap.add_argument("--override", action="append", default=[], help="ví dụ generation.temperature=0.6")
     ap.add_argument("--dry-run", action="store_true", help="chỉ đếm việc và in mẫu prompt, không gọi API")
     args = ap.parse_args(argv)
@@ -207,7 +236,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.dry_run:
         gen = cfg["generation"]
-        done = load_done_keys(workdir / cfg["stage_a_files"]["trajectories"], lambda r: r["tid"])
+        done = set()
+        for p in all_trajectory_files(workdir, cfg["stage_a_files"]):
+            done |= load_done_keys(p, lambda r: r["tid"])
         tasks = build_tasks(questions, teachers, gen["samples_per_teacher"], done)
         print(f"[dry-run] workdir={workdir}\n[dry-run] {len(questions)} câu hỏi, mô hình dạy: "
               f"{[t['model_id'] for t in teachers]}\n[dry-run] đã có {len(done)} chuỗi, cần sinh {len(tasks)}")
@@ -218,7 +249,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     client = make_openrouter_client(cfg)
-    run_generation(cfg, questions, teachers, client, workdir, max_cost=args.max_cost, workers=args.workers)
+    run_generation(cfg, questions, teachers, client, workdir, max_cost=args.max_cost, workers=args.workers,
+                   shard=args.shard)
     return 0
 
 

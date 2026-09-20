@@ -1,5 +1,4 @@
-"""
-a3_filter: gán nhãn đúng/sai, lọc sơ bộ, thống kê (Giai đoạn A, bước [2]).
+"""a3_filter: gán nhãn đúng/sai, lọc sơ bộ, thống kê (Giai đoạn A, bước [2]).
 
     python -m src.stage_a.a3_filter --workdir data/pilot/run2_boxed
     python -m src.stage_a.a3_filter --workdir data/stage_a
@@ -136,12 +135,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     expected = args.expected_chains or len(cfg["teachers"]) * cfg["generation"]["samples_per_teacher"]
 
     questions = read_jsonl(workdir / files["questions"])
-    trajectories = read_jsonl(workdir / files["trajectories"])
+    from src.stage_a.a2_generate import all_trajectory_files
+    traj_files = all_trajectory_files(workdir, files)
+    trajectories = [t for p in traj_files for t in read_jsonl(p)]
+    if len(traj_files) > 1:
+        print(f"[a3] đọc gộp {len(traj_files)} file chuỗi: {', '.join(p.name for p in traj_files)}")
     if not questions or not trajectories:
         raise SystemExit(f"Thiếu dữ liệu trong {workdir} (questions={len(questions)}, trajectories={len(trajectories)}).")
     tids = [t["tid"] for t in trajectories]
     if len(tids) != len(set(tids)):
-        raise SystemExit("trajectories.jsonl có tid trùng nhau, không được phép (a2 đã bỏ qua tid có sẵn).")
+        from collections import Counter as _C
+        dup = [t for t, n in _C(tids).items() if n > 1][:3]
+        raise SystemExit(f"Có tid trùng nhau giữa các file chuỗi, ví dụ {dup}. Nếu chạy song song nhiều lô thì "
+                         f"mỗi lô phải nhận các mô hình dạy KHÁC nhau qua --teachers.")
 
     labels = label_trajectories(questions, trajectories)
     stats, kept, incomplete = compute_stats(questions, labels, expected, min_correct)

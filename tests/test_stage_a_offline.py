@@ -66,8 +66,16 @@ def workdir(tmp_path, cfg):
 def test_config_merge_and_directions(cfg):
     assert cfg.selection.k == 3 and cfg.generation.temperature == 0.8
     from src.common.config import signal_direction
+
+    # Đọc tên tín hiệu từ chính cấu hình thay vì viết cứng, để đổi tên khoá không làm hỏng bài kiểm thử.
+    # Điều cần giữ là quy tắc, không phải danh sách tên: CHỈ rsr là min, mọi tín hiệu khác đều max.
+    names = list(cfg["signal_direction"])
+    assert "rsr" in names and len(names) >= 5
     assert signal_direction(cfg, "rsr") == "min"
-    assert all(signal_direction(cfg, n) == "max" for n in ("grape", "local_nat", "lark", "token_length"))
+    assert [n for n in names if signal_direction(cfg, n) == "min"] == ["rsr"]
+    assert any("local" in n for n in names), "thiếu khoá cho Local Naturalness trong signal_direction"
+    with pytest.raises(KeyError):
+        signal_direction(cfg, "tin_hieu_khong_ton_tai")
     assert abs(sum(cfg.quality.rule_weights.values()) - 1.0) < 1e-9
     assert parse_override("selection.k=1") == {"selection": {"k": 1}}
     assert load_config(overrides=["selection.k=1"]).selection.k == 1
@@ -184,3 +192,51 @@ def test_writer_survives_truncated_last_line(tmp_path):
     assert text.count("\n") == 3
     with pytest.raises(ValueError):                             # dòng hỏng ở giữa file thì phải báo lỗi
         read_jsonl(p)
+
+
+def test_shard_writes_separate_files_and_sees_other_shards(cfg, workdir):
+    """Chạy song song nhiều tiến trình: mỗi lô ghi file riêng, nhưng vẫn thấy phần các lô khác đã sinh."""
+    files = cfg["stage_a_files"]
+    qs = read_jsonl(workdir / files["questions"])
+    client = FakeClient(qs)
+
+    a2_generate.run_generation(cfg, qs, a2_generate.select_teachers(cfg, ["llama70b"]), client, workdir,
+                               shard="llama70b", show_progress=False)
+    a2_generate.run_generation(cfg, qs, a2_generate.select_teachers(cfg, ["qwen72b"]), client, workdir,
+                               shard="qwen72b", show_progress=False)
+
+    assert not (workdir / files["trajectories"]).exists()          # không có file chính
+    n = len(qs) * 3
+    assert len(read_jsonl(workdir / "trajectories.llama70b.jsonl")) == n
+    assert len(read_jsonl(workdir / "trajectories.qwen72b.jsonl")) == n
+
+    # lô thứ ba thấy được 2 lô trước, nên chỉ sinh phần của chính nó
+    before = client.calls
+    a2_generate.run_generation(cfg, qs, a2_generate.select_teachers(cfg, ["deepseek"]), client, workdir,
+                               shard="deepseek", show_progress=False)
+    assert client.calls - before == n
+
+    # chạy lại một lô cũ thì không còn việc
+    before = client.calls
+    a2_generate.run_generation(cfg, qs, a2_generate.select_teachers(cfg, ["llama70b"]), client, workdir,
+                               shard="llama70b", show_progress=False)
+    assert client.calls == before
+
+    # a3 đọc gộp cả ba lô
+    assert a3_filter.main(["--workdir", str(workdir)]) == 0
+    assert len(read_jsonl(workdir / files["labels"])) == n * 3
+
+
+def test_a3_detects_overlapping_shards(cfg, workdir):
+    """Hai lô cùng nhận một mô hình dạy sẽ sinh trùng tid; a3 phải bắt được thay vì đếm gấp đôi."""
+    files = cfg["stage_a_files"]
+    qs = read_jsonl(workdir / files["questions"])
+    client = FakeClient(qs)
+    rows = [{"tid": traj_id(qs[0]["qid"], "llama70b", 0), "qid": qs[0]["qid"], "teacher": "llama70b",
+             "sample_idx": 0, "text": "x", "finish_reason": "stop", "completion_tokens": 5}]
+    from src.common.io_utils import write_jsonl
+    write_jsonl(workdir / "trajectories.a.jsonl", rows)
+    write_jsonl(workdir / "trajectories.b.jsonl", rows)
+    with pytest.raises(SystemExit) as e:
+        a3_filter.main(["--workdir", str(workdir), "--allow-incomplete"])
+    assert "trùng nhau" in str(e.value)

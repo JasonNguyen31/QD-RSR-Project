@@ -1,4 +1,5 @@
-"""a5_embed: tính biểu diễn vector cho từng chuỗi, và đo xem cách biểu diễn có phân biệt được chuỗi hay không.
+"""
+a5_embed: tính biểu diễn vector cho từng chuỗi, và đo xem cách biểu diễn có phân biệt được chuỗi hay không.
 
     python -m src.stage_a.a5_embed --workdir data/pilot/run2_boxed --probe
     python -m src.stage_a.a5_embed --workdir data/pilot/run2_boxed

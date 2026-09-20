@@ -48,6 +48,25 @@ def check_teachers(cfg, client: ChatClient) -> int:
     return bad
 
 
+def check_judge_openrouter(cfg, model_ids: Sequence[str]) -> int:
+    """Gọi giám khảo qua OpenRouter, đúng đường mà a4_score_quality sẽ dùng."""
+    client = make_openrouter_client(cfg)
+    client.max_attempts = 2
+    bad = 0
+    for mid in model_ids:
+        try:
+            res = client.chat(model=mid, messages=[{"role": "user", "content": QUESTION}],
+                              temperature=0.0, top_p=1.0, max_tokens=200)
+            cost = f"{res.cost:.6f} USD" if res.cost is not None else "không trả chi phí"
+            print(f"[OK]  {mid:<30} {res.latency_s:>5.1f}s  {cost:<20} -> {res.text.strip()[:40]!r}")
+        except Exception as exc:  # noqa: BLE001
+            bad += 1
+            print(f"[LỖI] {mid:<30} {type(exc).__name__}: {str(exc)[:180]}")
+            print("      Nếu là NotFoundError thì tên mô hình sai. Mở https://openrouter.ai/models "
+                  "tìm tên đúng rồi sửa judge.model_id trong configs/models.yaml.")
+    return bad
+
+
 def check_judge(cfg, model_ids: Sequence[str]) -> int:
     from google import genai  # cùng cách gọi với test_api.py cũ đã chạy được
 
@@ -79,7 +98,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     bad = check_teachers(cfg, make_openrouter_client(cfg))
     if not args.skip_judge:
         ids = [cfg["judge"]["model_id"]] + ([cfg["judge"]["compare_model_id"]] if args.judge_compare else [])
-        bad += check_judge(cfg, ids)
+        provider = cfg["judge"].get("provider", "openrouter")
+        print(f"\ngiám khảo (provider = {provider}):")
+        bad += check_judge_openrouter(cfg, ids) if provider == "openrouter" else check_judge(cfg, ids)
     print("\nTẤT CẢ ĐỀU GỌI ĐƯỢC" if bad == 0 else f"\nCÓ {bad} MÔ HÌNH LỖI")
     return 0 if bad == 0 else 1
 

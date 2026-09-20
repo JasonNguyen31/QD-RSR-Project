@@ -7,8 +7,8 @@
 
 project:
   name: qd-rsr
-  data_seed: 42                 # seed rút mẫu câu hỏi (khớp lô pilot)
-  train_seeds: [42, 43, 44]     # ba seed huấn luyện, báo cáo trung bình và độ lệch chuẩn
+  data_seed: 42 # seed rút mẫu câu hỏi (khớp lô pilot)
+  train_seeds: [42, 43, 44] # ba seed huấn luyện, báo cáo trung bình và độ lệch chuẩn
 
 # Đường dẫn tương đối so với gốc repo
 paths:
@@ -24,42 +24,44 @@ paths:
 
 # ---------------------------------------------------------------- Giai đoạn A: sinh chuỗi
 generation:
-  prompt_id: rsr                # "rsr" = cách sinh của bài gốc (Phụ lục A.2): chỉ dẫn nối vào cuối đề bài,
-                                # vai trò user, không có system prompt. Nội dung ở src/common/prompts.py.
-                                # "boxed" là cách cũ, chỉ dùng để sinh bù cho lô pilot đã chạy trước 19/09.
+  prompt_id:
+    rsr # "rsr" = cách sinh của bài gốc (Phụ lục A.2): chỉ dẫn nối vào cuối đề bài,
+    # vai trò user, không có system prompt. Nội dung ở src/common/prompts.py.
+    # "boxed" là cách cũ, chỉ dùng để sinh bù cho lô pilot đã chạy trước 19/09.
   samples_per_teacher: 3
-  temperature: 0.8              # [TẠM] thiết kế hiện tại. Bài gốc (A.2) dùng tham số khuyến nghị của TỪNG mô hình,
-                                # với họ Qwen là temperature 0.6, top_p 0.95, top_k 20, min_p 0.
-                                # Chốt sau khi đo khoảng cách giữa các chuỗi ở hai mức (xem a5_embed).
+  temperature:
+    0.8 # [TẠM] thiết kế hiện tại. Bài gốc (A.2) dùng tham số khuyến nghị của TỪNG mô hình,
+    # với họ Qwen là temperature 0.6, top_p 0.95, top_k 20, min_p 0.
+    # Chốt sau khi đo khoảng cách giữa các chuỗi ở hai mức (xem a5_embed).
   top_p: 0.95
-  max_tokens: 2048              # bằng độ dài tối đa lúc huấn luyện. Chuỗi bị cắt (finish_reason=length) bị loại ở a3
-  max_workers: 3                # 8 luồng bị chặn tần suất trên bài MATH khó (Notion mục R5)
-  max_attempts: 6               # số lần thử tối đa mỗi lượt gọi (BadRequest chỉ thử 2 lần)
+  max_tokens: 3072 # bằng độ dài tối đa lúc huấn luyện. Chuỗi bị cắt (finish_reason=length) bị loại ở a3
+  max_workers: 3 # 8 luồng bị chặn tần suất trên bài MATH khó (Notion mục R5)
+  max_attempts: 6 # số lần thử tối đa mỗi lượt gọi (BadRequest chỉ thử 2 lần)
   request_timeout_s: 180
 
 # ---------------------------------------------------------------- Chất lượng Qual(t)
 quality:
-  alpha: 0.5                    # Qual = alpha * rule + (1 - alpha) * llm
+  alpha: 0.5 # Qual = alpha * rule + (1 - alpha) * llm
   # Trọng số theo bài RSR (Phụ lục B.2) và Notion mục B5/L5.
   # LƯU Ý: mục 6.8 trên trang DỰ ÁN CNTT còn ghi "bằng nhau, mỗi giá trị 0,25", mâu thuẫn với bảng ở mục 6.6.
   rule_weights:
-    elaborated: 0.30            # tổng số từ
+    elaborated: 0.30 # tổng số từ
     self_verification: 0.20
     exploratory: 0.25
     adaptive: 0.25
-  rule_keywords:                # đếm tần suất, chia cho tổng số từ, rồi chuẩn hoá z-score riêng từng tiêu chí
+  rule_keywords: # đếm tần suất, chia cho tổng số từ, rồi chuẩn hoá z-score riêng từng tiêu chí
     self_verification: [check, verify]
     exploratory: [perhaps, might]
     adaptive: [therefore, since]
 
 # ---------------------------------------------------------------- Chọn lọc (Giai đoạn B)
 selection:
-  k: 3                          # cấu hình chính. Cấu hình phụ k=1 dùng --override selection.k=1
-  a: 1.0                        # số mũ của Fit. a=0 tắt Fit (ablation)
-  b: 1.0                        # số mũ của Qual. b=0 tắt Qual (ablation)
-  lambda_div: 0.5               # [TẠM] chốt bằng lưới bên dưới trên tập kiểm định 200 câu, sau khi B9 xong
+  k: 3 # cấu hình chính. Cấu hình phụ k=1 dùng --override selection.k=1
+  a: 1.0 # số mũ của Fit. a=0 tắt Fit (ablation)
+  b: 1.0 # số mũ của Qual. b=0 tắt Qual (ablation)
+  lambda_div: 0.5 # [TẠM] chốt bằng lưới bên dưới trên tập kiểm định 200 câu, sau khi B9 xong
   lambda_grid: [0.0, 0.25, 0.5, 1.0]
-  rsr_rank_cap: 100             # r_max của bài gốc
+  rsr_rank_cap: 100 # r_max của bài gốc
   normalize: minmax_per_question
 
 # Chiều tối ưu của từng tín hiệu khi chọn top-k. CHỈ RSR là min, còn lại đều là max.
@@ -67,7 +69,7 @@ selection:
 signal_direction:
   rsr: min
   grape: max
-  local_nat: max
+  local_naturalness: max
   lark: max
   token_length: max
   rule_quality: max
@@ -80,12 +82,13 @@ training:
   lora_r: 16
   lora_alpha: 32
   lora_dropout: 0.05
-  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  target_modules:
+    [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
   learning_rate: 1.0e-4
   lr_scheduler: cosine
   warmup_ratio: 0.03
   num_epochs: 3
-  max_seq_len: 2048
+  max_seq_len: 3072
   # [TẠM] chốt sau B8 khi đo mức chiếm bộ nhớ thực tế
   per_device_batch_size: 2
   gradient_accumulation_steps: 8
@@ -93,13 +96,13 @@ training:
   bf16: true
 
 hardware:
-  vram_budget_gb: 10            # không chạy sát trần 12GB (Notion mục B8)
+  vram_budget_gb: 10 # không chạy sát trần 12GB (Notion mục B8)
   torch_memory_fraction: 0.85
 
 # ---------------------------------------------------------------- Đánh giá (Giai đoạn C)
 eval:
   benchmarks: [gsm8k, math500, amc, aime24, aime25, bbh]
-  n_samples: 4                  # Acc@4: đúng nếu có ít nhất một trong 4 lượt đúng
-  report: [acc@4, acc@1]        # acc@1 = tỷ lệ đúng trung bình của từng lượt lấy mẫu
-  temperature: 0.6              # [TẠM] đối chiếu với cài đặt đánh giá của RSR trước khi chạy
-  max_new_tokens: 2048          # [TẠM]
+  n_samples: 4 # Acc@4: đúng nếu có ít nhất một trong 4 lượt đúng
+  report: [acc@4, acc@1] # acc@1 = tỷ lệ đúng trung bình của từng lượt lấy mẫu
+  temperature: 0.6 # [TẠM] đối chiếu với cài đặt đánh giá của RSR trước khi chạy
+  max_new_tokens: 2048 # [TẠM]

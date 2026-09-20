@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from src.common.prompts import build_judge_prompt
@@ -67,3 +69,74 @@ def test_combine_alpha_and_missing_judge():
 
     rows0 = combine(cands, judge, alpha=0.0)                             # alpha=0 thì qual chính là llm_score
     assert {r["tid"]: r["qual"] for r in rows0}["t1"] == pytest.approx(1.0)
+
+
+def test_repairs_latex_backslashes_in_reason():
+    r"""Giám khảo viết LaTeX vào lý giải làm JSON sai cú pháp; bộ đọc phải tự sửa.
+
+    Lưu ý quan trọng: \f, \t, \b, \n, \r, \u LÀ ký tự thoát hợp lệ của JSON, nên \frac, \times, \boxed
+    KHÔNG làm hỏng JSON — chúng chỉ âm thầm biến thành ký tự xuống trang hoặc tab trong phần lý giải,
+    ảnh hưởng chữ chứ không ảnh hưởng điểm. Thứ thật sự gây lỗi "Invalid \escape" là \left, \cdot, \sqrt, \pi.
+    """
+    body = ('{"dimensional_evaluation": {"factual_accuracy": {"score": 0.6, '
+            r'"reason": "uses \left( \cdot \right) and \sqrt{2} correctly"}}, '
+            r'"overall_score": 0.6, "overall_reason": "\pi is fine"}')
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(body)                      # JSON gốc thật sự hỏng
+    r = parse_judge_json(body)                # nhưng bộ đọc của ta vẫn lấy được điểm
+    assert r["overall_score"] == 0.6 and r["dimensions"]["factual_accuracy"] == 0.6
+
+
+def test_truncated_response_says_so():
+    cut = '{\n "dimensional_evaluation": {\n "factual_accuracy": {\n "score": 0.7,\n "reason": "The candidate'
+    with pytest.raises(ValueError) as e:
+        parse_judge_json(cut)
+    assert "CẮT CỤT" in str(e.value) and "judge.max_tokens" in str(e.value)
+
+
+def test_valid_escapes_untouched():
+    from src.stage_a.a4_score_quality import repair_json_escapes
+
+    for keep in (r'"a\nb"', r'"a\u00e9b"', r'"a\tb"', r'"a\\b"', r'"\frac"'):
+        assert repair_json_escapes(keep) == keep, "ký tự thoát hợp lệ không được đụng vào"
+    for bad, fixed in ((r'"\left"', r'"\\left"'), (r'"\cdot"', r'"\\cdot"'), (r'"\pi"', r'"\\pi"')):
+        assert repair_json_escapes(bad) == fixed
+
+
+def test_accepts_real_newlines_inside_strings():
+    """Giám khảo xuống dòng thật giữa phần lý giải; JSON chuẩn coi đó là lỗi, ta thì chấp nhận."""
+    body = ('{"dimensional_evaluation": {"factual_accuracy": {"score": 0.8,\n'
+            ' "reason": "dòng một\nrồi dòng hai"}},\n "overall_score": 0.8, "overall_reason": "ổn"}')
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(body)
+    assert parse_judge_json(body)["overall_score"] == 0.8
+
+
+def test_strips_text_around_json():
+    body = 'Here is the evaluation:\n{"overall_score": 0.4, "overall_reason": "x"}\nLet me know if you need more.'
+    assert parse_judge_json(body)["overall_score"] == 0.4
+
+
+def test_salvage_from_broken_json():
+    """JSON hỏng hẳn nhưng vẫn còn overall_score: lấy điểm và đánh dấu salvaged."""
+    broken = '{"dimensional_evaluation": {"x": {"score": 0.9, "reason": "he said "hi" oops"}}, "overall_score": 0.65}'
+    r = parse_judge_json(broken)
+    assert r["overall_score"] == 0.65 and r["salvaged"] == "regex_overall"
+
+
+def test_salvage_averages_dimensions_when_cut_before_overall():
+    cut = ('{"dimensional_evaluation": {"a": {"score": 0.8, "reason": "x"}, "b": {"score": 0.6, "reason": "y"}, '
+           '"c": {"score": 1.0, "reason": "z')
+    r = parse_judge_json(cut)
+    assert r["overall_score"] == pytest.approx(0.8) and r["salvaged"] == "mean_of_3_dimensions"
+
+
+def test_salvage_refuses_when_too_little():
+    from src.stage_a.a4_score_quality import salvage_score
+    assert salvage_score('{"score": 0.5, "reason": "chỉ có một tiêu chí') is None
+    with pytest.raises(ValueError):
+        parse_judge_json("mô hình trả lời bằng văn xuôi, không có điểm nào")
+
+
+def test_clean_json_is_not_marked_salvaged():
+    assert "salvaged" not in parse_judge_json(GOOD)
