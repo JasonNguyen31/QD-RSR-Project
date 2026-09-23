@@ -35,6 +35,12 @@ except ImportError:  # tqdm không bắt buộc
         return it
 
 
+def is_key_limit(exc: BaseException) -> bool:
+    """Lỗi 403 do khoá chạm hạn mức chi tiêu. Lỗi này không bao giờ tự hết, nên phải dừng cả lô ngay."""
+    msg = str(exc)
+    return type(exc).__name__ == "PermissionDeniedError" and ("Key limit" in msg or "limit exceeded" in msg)
+
+
 def shard_names(files: Mapping, shard: str | None) -> tuple[str, str]:
     """Tên file chuỗi và file lỗi cho một lô.
 
@@ -52,7 +58,10 @@ def all_trajectory_files(workdir: Path, files: Mapping) -> list[Path]:
     """File chuỗi chính cộng mọi file lô, để việc chạy bù thấy được phần các lô khác đã sinh."""
     base = files["trajectories"]
     stem = base.replace(".jsonl", "")
-    return sorted(set([workdir / base] + list(workdir.glob(f"{stem}.*.jsonl"))))
+    found = set(workdir.glob(f"{stem}.*.jsonl"))
+    if (workdir / base).exists():
+        found.add(workdir / base)
+    return sorted(found)
 
 
 def select_teachers(cfg: Mapping, keys: Sequence[str] | None) -> list[dict]:
@@ -122,6 +131,7 @@ def run_generation(
 
     stop = threading.Event()
     budget_hit = threading.Event()
+    key_limit = threading.Event()
     per_teacher: dict[str, dict] = defaultdict(lambda: {"ok": 0, "failed": 0, "skipped": 0, "tokens": 0,
                                                         "latency": 0.0, "truncated": 0})
     warned_cost = False
@@ -144,6 +154,9 @@ def run_generation(
                     provider_order=t.get("provider_order") or None,
                 )
             except Exception as exc:  # noqa: BLE001 - mọi lỗi API đều ghi lại rồi đi tiếp
+                if is_key_limit(exc):
+                    key_limit.set()
+                    stop.set()
                 fail_w.append({"tid": tid, "qid": q["qid"], "teacher": t["key"], "sample_idx": i,
                                "error_type": type(exc).__name__, "error": str(exc)[:300], "ts": now_iso()})
                 return t["key"], "failed", None
@@ -185,7 +198,8 @@ def run_generation(
             ex.shutdown(wait=True, cancel_futures=True)
 
     summary = {"tasks": len(tasks), "per_teacher": {k: dict(v) for k, v in per_teacher.items()},
-               "usage": client.tracker.snapshot(), "budget_hit": budget_hit.is_set()}
+               "usage": client.tracker.snapshot(), "budget_hit": budget_hit.is_set(),
+               "key_limit": key_limit.is_set()}
     print_summary(summary)
     return summary
 
@@ -202,6 +216,9 @@ def print_summary(summary: Mapping) -> None:
           f"chi phí {u['cost_usd']} USD ({u['cost_reports']}/{u['ok']} lượt có báo chi phí)")
     if u["attempt_errors"]:
         print(f"lỗi trong các lần thử (kể cả lần đã thử lại thành công): {u['attempt_errors']}")
+    if summary.get("key_limit"):
+        print("ĐÃ DỪNG: khoá OpenRouter chạm HẠN MỨC CỦA KHOÁ (khác với số dư tài khoản). Vào "
+              "https://openrouter.ai/settings/keys nâng Credit limit, rồi chạy lại cùng lệnh.")
     if summary["budget_hit"]:
         print("ĐÃ DỪNG do chạm ngân sách --max-cost. Nâng mức rồi chạy lại cùng lệnh để sinh tiếp.")
     if any(s["failed"] for s in summary["per_teacher"].values()):

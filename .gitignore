@@ -7,4 +7,4 @@ __pycache__/
 *.pyc
 *.log
 .DS_Store
-unsloth_compiled_cache/
+unsloth_compiled_cache/docs/figures/*.svg

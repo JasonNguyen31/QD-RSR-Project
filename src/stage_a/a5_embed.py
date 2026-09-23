@@ -1,5 +1,4 @@
-"""
-a5_embed: tính biểu diễn vector cho từng chuỗi, và đo xem cách biểu diễn có phân biệt được chuỗi hay không.
+"""a5_embed: tính biểu diễn vector cho từng chuỗi, và đo xem cách biểu diễn có phân biệt được chuỗi hay không.
 
     python -m src.stage_a.a5_embed --workdir data/pilot/run2_boxed --probe
     python -m src.stage_a.a5_embed --workdir data/pilot/run2_boxed
@@ -47,6 +46,52 @@ def pairwise_distances(vecs) -> list[float]:
 
     n = len(vecs)
     return [float(np.linalg.norm(vecs[i] - vecs[j])) for i in range(n) for j in range(i + 1, n)]
+
+
+def probe_by_group(tids: Sequence[str], vecs, group_of_qid: Mapping[str, str]) -> dict:
+    """Khoảng cách giữa các chuỗi trong cùng câu hỏi, tách theo nhóm độ khó.
+
+    Vì sao cần: số chuỗi đúng mỗi câu đo độ bão hoà về ĐÁP ÁN, không đo việc các chuỗi có giống nhau hay
+    không. Muốn nói ứng viên GSM8K gần như trùng lặp thì phải so khoảng cách của nó với các nhóm khó hơn.
+    """
+    import numpy as np
+
+    idx = {t: i for i, t in enumerate(tids)}
+    per_group: dict[str, list[float]] = defaultdict(list)
+    by_q: dict[str, list[str]] = defaultdict(list)
+    for t in tids:
+        by_q[split_tid(t)[0]].append(t)
+    for qid, ts in by_q.items():
+        g = group_of_qid.get(qid)
+        if g is None or len(ts) < 2:
+            continue
+        per_group[g].extend(pairwise_distances(np.stack([vecs[idx[t]] for t in ts])))
+
+    out = {}
+    for g, xs in per_group.items():
+        xs = sorted(xs)
+        q = lambda p: xs[min(int(p * len(xs)), len(xs) - 1)]  # noqa: E731
+        out[g] = {"questions": sum(1 for qid, ts in by_q.items()
+                                   if group_of_qid.get(qid) == g and len(ts) >= 2),
+                  "pairs": len(xs), "p25": round(q(0.25), 4), "median": round(q(0.5), 4),
+                  "p75": round(q(0.75), 4), "mean": round(statistics.mean(xs), 4)}
+    return out
+
+
+def print_probe_by_group(g: Mapping) -> None:
+    if not g:
+        return
+    print("\n[a5] khoảng cách trong cùng câu hỏi, tách theo nhóm độ khó")
+    print(f"{'nhóm':<12}{'câu':>7}{'số cặp':>9}{'p25':>9}{'trung vị':>11}{'p75':>9}")
+    for name in sorted(g):
+        r = g[name]
+        print(f"{name:<12}{r['questions']:>7}{r['pairs']:>9}{r['p25']:>9.3f}{r['median']:>11.3f}{r['p75']:>9.3f}")
+    meds = {n: r["median"] for n, r in g.items()}
+    lo, hi = min(meds, key=meds.get), max(meds, key=meds.get)
+    print(f"     thấp nhất {lo} ({meds[lo]:.3f}), cao nhất {hi} ({meds[hi]:.3f}), "
+          f"chênh {meds[hi] - meds[lo]:+.3f}")
+    print("     Nếu GSM8K thấp hơn hẳn các nhóm MATH thì ứng viên của nó thật sự gần nhau hơn, và câu")
+    print("     'các chuỗi gần như trùng lặp' trong paper đứng được. Nếu ngang nhau thì phải bỏ câu đó.")
 
 
 def probe(tids: Sequence[str], vecs, by_question: bool = True) -> dict:
@@ -133,10 +178,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--workdir", help="mặc định paths.data_stage_a")
     ap.add_argument("--probe", action="store_true", help="in phân bố khoảng cách và ghi embed_probe.json")
-    ap.add_argument("--limit", type=int, help="chỉ tính N chuỗi đầu, dùng để thử")
+    ap.add_argument("--limit", type=int, help="chỉ tính khoảng N chuỗi, lấy trọn các câu hỏi ngẫu nhiên")
+    ap.add_argument("--sample-seed", type=int, default=42)
     ap.add_argument("--device", help="mặc định embedding.device (mps trên Mac, cpu nếu không có)")
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--out", default="embeddings.npz")
+    ap.add_argument("--reuse", action="store_true",
+                    help="đọc lại file vector đã có thay vì mã hoá lại, chỉ chạy phần đo")
     ap.add_argument("--override", action="append", default=[])
     args = ap.parse_args(argv)
 
@@ -147,20 +195,47 @@ def main(argv: Sequence[str] | None = None) -> int:
     cands = read_jsonl(workdir / cfg["stage_a_files"]["candidates"])
     if not cands:
         raise SystemExit(f"Không có ứng viên trong {workdir}. Chạy a3_filter trước.")
-    if args.limit:
-        cands = cands[: args.limit]
+    if args.limit and len(cands) > args.limit:
+        # Lấy trọn các câu hỏi ngẫu nhiên cho tới khi đủ N chuỗi. Lấy N chuỗi ĐẦU thì toàn bộ rơi vào
+        # file lô đọc trước (DeepSeek), mất hẳn nhóm "khác mô hình dạy" trong phép đo --probe.
+        import random
+        by_q: dict[str, list] = {}
+        for c in cands:
+            by_q.setdefault(c["qid"], []).append(c)
+        qids = sorted(by_q)
+        random.Random(args.sample_seed).shuffle(qids)
+        picked: list = []
+        for q in qids:
+            if len(picked) >= args.limit:
+                break
+            picked.extend(by_q[q])
+        cands = picked
+        print(f"[a5] lấy {len(cands)} chuỗi từ {len({c['qid'] for c in cands})} câu hỏi ngẫu nhiên (seed {args.sample_seed})")
 
     emb_cfg = cfg["embedding"]
-    vecs = encode([c["text"] for c in cands], emb_cfg["model_id"], args.device or emb_cfg["device"],
-                  emb_cfg["max_length"], args.batch_size)
-    tids = [c["tid"] for c in cands]
-    np.savez_compressed(workdir / args.out, tids=np.array(tids), vectors=vecs)
-    print(f"[a5] đã ghi {workdir / args.out}: {vecs.shape[0]} vector, {vecs.shape[1]} chiều")
+    if args.reuse:
+        path = workdir / args.out
+        if not path.exists():
+            raise SystemExit(f"Không thấy {path}. Bỏ --reuse để tính lại.")
+        data = np.load(path, allow_pickle=False)
+        tids, vecs = [str(t) for t in data["tids"]], data["vectors"]
+        print(f"[a5] dùng lại {path}: {vecs.shape[0]} vector, {vecs.shape[1]} chiều")
+    else:
+        vecs = encode([c["text"] for c in cands], emb_cfg["model_id"], args.device or emb_cfg["device"],
+                      emb_cfg["max_length"], args.batch_size)
+        tids = [c["tid"] for c in cands]
+        np.savez_compressed(workdir / args.out, tids=np.array(tids), vectors=vecs)
+        print(f"[a5] đã ghi {workdir / args.out}: {vecs.shape[0]} vector, {vecs.shape[1]} chiều")
 
     if args.probe:
         p = probe(tids, vecs)
         print_probe(p)
-        write_json(workdir / "embed_probe.json", {"model": emb_cfg["model_id"], "n": len(tids), **p})
+        from src.stage_a.a3_filter import group_of
+        qs = read_jsonl(workdir / cfg["stage_a_files"]["questions"])
+        by_group = probe_by_group(tids, vecs, {q["qid"]: group_of(q) for q in qs})
+        print_probe_by_group(by_group)
+        write_json(workdir / "embed_probe.json",
+                   {"model": emb_cfg["model_id"], "n": len(tids), **p, "by_group": by_group})
     return 0
 
 

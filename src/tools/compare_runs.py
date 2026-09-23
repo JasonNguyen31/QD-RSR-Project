@@ -31,7 +31,8 @@ def load_run(cfg, path_str: str) -> dict:
     wd = resolve_path(cfg, path_str)
     files = cfg["stage_a_files"]
     qs = {q["qid"]: q for q in read_jsonl(wd / files["questions"])}
-    trajs = {t["tid"]: t for t in read_jsonl(wd / files["trajectories"])}
+    from src.stage_a.a2_generate import all_trajectory_files
+    trajs = {t["tid"]: t for p in all_trajectory_files(wd, files) for t in read_jsonl(p)}
     labels = read_jsonl(wd / files["labels"])
     if not labels:
         raise SystemExit(f"{wd} chưa có labels.jsonl. Chạy a3_filter trước (có thể kèm --allow-incomplete).")

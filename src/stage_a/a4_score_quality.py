@@ -135,18 +135,29 @@ class OpenRouterJudge:
         self.seconds = 0.0
         self.cost = 0.0
         self.truncated = 0
+        self.parse_retries = 0
         self.errors: dict[str, int] = {}
 
     def score(self, prompt: str) -> dict:
         t0 = time.monotonic()
         try:
-            res = self._client.chat(model=self.model_id, messages=[{"role": "user", "content": prompt}],
-                                    temperature=self.jcfg.get("temperature", 0.0), top_p=1.0,
-                                    max_tokens=self.jcfg.get("max_tokens", 3000))
-            if res.finish_reason == "length":
-                with self._lock:
-                    self.truncated += 1
-            out = parse_judge_json(res.text)
+            # Phản hồi JSON dở dang thường là sự cố tức thời phía nhà cung cấp: trên lô thử 200 chuỗi,
+            # phần lớn lượt hỏng dài chỉ 400-800 ký tự, không phải do chạm trần token. Thử lại một lần.
+            for attempt in (1, 2):
+                res = self._client.chat(model=self.model_id, messages=[{"role": "user", "content": prompt}],
+                                        temperature=self.jcfg.get("temperature", 0.0), top_p=1.0,
+                                        max_tokens=self.jcfg.get("max_tokens", 3000))
+                if res.finish_reason == "length":
+                    with self._lock:
+                        self.truncated += 1
+                try:
+                    out = parse_judge_json(res.text)
+                    break
+                except ValueError:
+                    if attempt == 2:
+                        raise
+                    with self._lock:
+                        self.parse_retries += 1
             with self._lock:
                 self.ok += 1
                 self.seconds += time.monotonic() - t0
@@ -242,6 +253,11 @@ def run_judge(cfg: Mapping, cands: Sequence[Mapping], questions: Mapping[str, Ma
             try:
                 res = judge.score(prompt)
             except Exception as exc:  # noqa: BLE001
+                from src.stage_a.a2_generate import is_key_limit
+                if is_key_limit(exc):
+                    budget_hit.set()
+                    print("\n[a4] DỪNG: khoá OpenRouter chạm hạn mức của khoá. Nâng Credit limit tại "
+                          "https://openrouter.ai/settings/keys rồi chạy lại cùng lệnh.", file=sys.stderr)
                 return c["tid"], None, f"{type(exc).__name__}: {str(exc)[:200]}"
             w.append({"tid": c["tid"], "qid": c["qid"], "model": model_id,
                       "use_reference": use_reference, **res, "ts": now_iso()})
@@ -268,6 +284,8 @@ def run_judge(cfg: Mapping, cands: Sequence[Mapping], questions: Mapping[str, Ma
     if salvaged:
         print(f"[a4] {len(salvaged)} chuỗi phải dùng lớp cứu hộ để lấy điểm (JSON hỏng). Các bản ghi này có "
               f"trường 'salvaged' để lọc ra kiểm tra về sau.")
+    if getattr(judge, "parse_retries", 0):
+        print(f"[a4] {judge.parse_retries} lượt phải chấm lại vì JSON hỏng ở lần đầu.")
     if getattr(judge, "truncated", 0):
         print(f"[a4] {judge.truncated} phản hồi bị cắt ở judge.max_tokens. Nâng giá trị đó trong configs/models.yaml.")
     cost = getattr(judge, "cost", 0.0)

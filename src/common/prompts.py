@@ -119,3 +119,45 @@ def build_judge_prompt(question: str, trajectory: str, reference_solution: str |
     block = REFERENCE_BLOCK.format(reference_solution=reference_solution.strip()) if reference_solution else ""
     return JUDGE_PROMPT.format(question=question.strip(), reference_block=block,
                                reasoning_to_evaluate=trajectory.strip())
+
+
+# ---------------------------------------------------------------- Prompt cho hai phép đo ở R2
+# Dùng cho src/tools/compare_embedding.py, tái lập cách đo của Feng 2025 (RPD) ở quy mô nhỏ.
+
+SUMMARIZE_STEPS_PROMPT = """Summarize the mathematical solution below as a numbered list of 3 to 5 high-level steps.
+Each step states WHAT the solution does at that stage (the method or idea), not the arithmetic.
+Write one short sentence per step. Output only the numbered list, nothing else.
+
+SOLUTION:
+{trajectory}"""
+
+STRATEGY_LABEL_PROMPT = """You compare two solutions to the same mathematics problem and decide whether they follow
+the SAME overall solution strategy or DIFFERENT strategies.
+
+Same strategy means the two solutions take the same route to the answer: the same key idea, the same setup, the same
+sequence of transformations. Cosmetic differences do not matter: wording, notation, how much arithmetic is shown,
+the order of independent checks, or one solution verifying its answer while the other does not.
+
+Different strategy means the route itself differs: for example one sets up an equation while the other tests cases,
+one works forward from the givens while the other works backward from the answer, one is algebraic and the other
+geometric or combinatorial.
+
+PROBLEM:
+{question}
+
+SOLUTION A:
+{a}
+
+SOLUTION B:
+{b}
+
+Answer with a single JSON object and nothing else:
+{{"verdict": "same" or "different", "reason": "<one short sentence>"}}"""
+
+
+def build_summarize_prompt(trajectory: str) -> str:
+    return SUMMARIZE_STEPS_PROMPT.format(trajectory=trajectory.strip())
+
+
+def build_strategy_prompt(question: str, a: str, b: str) -> str:
+    return STRATEGY_LABEL_PROMPT.format(question=question.strip(), a=a.strip(), b=b.strip())

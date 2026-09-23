@@ -48,3 +48,32 @@ def test_probe_skips_single_trajectory_questions():
     tids, v = _vecs({"q1|A|0": [1.0, 0.0], "q2|A|0": [0.0, 1.0]})
     p = probe(tids, v)
     assert p["questions"] == 2 and p["within_question"]["n"] == 0
+
+
+def test_probe_by_group_separates_levels():
+    """Nhóm có các chuỗi gần nhau phải cho khoảng cách trung vị thấp hơn nhóm có chuỗi tản mát."""
+    import numpy as np
+
+    from src.stage_a.a5_embed import l2_normalize, probe_by_group
+
+    spec = {}
+    for i in range(3):                       # gsm8k: ba chuỗi gần như trùng nhau
+        spec[f"g1|A|{i}"] = [1.0, 0.001 * i]
+    for i, v in enumerate([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]]):   # math: ba chuỗi tản mát
+        spec[f"m1|A|{i}"] = v
+    tids = list(spec)
+    vecs = l2_normalize(np.array([spec[t] for t in tids], dtype=np.float32))
+    g = probe_by_group(tids, vecs, {"g1": "gsm8k", "m1": "math-L5"})
+    assert set(g) == {"gsm8k", "math-L5"}
+    assert g["gsm8k"]["pairs"] == 3 and g["math-L5"]["pairs"] == 3
+    assert g["gsm8k"]["median"] < 0.1 < g["math-L5"]["median"]
+
+
+def test_probe_by_group_skips_unknown_questions():
+    import numpy as np
+
+    from src.stage_a.a5_embed import l2_normalize, probe_by_group
+
+    tids = ["q1|A|0", "q1|A|1"]
+    vecs = l2_normalize(np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32))
+    assert probe_by_group(tids, vecs, {}) == {}

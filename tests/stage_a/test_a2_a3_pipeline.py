@@ -243,3 +243,23 @@ def test_a3_detects_overlapping_shards(cfg, workdir):
     with pytest.raises(SystemExit) as e:
         a3_filter.main(["--workdir", str(workdir), "--allow-incomplete"])
     assert "trùng nhau" in str(e.value)
+
+
+def test_key_limit_detection():
+    """Lỗi 403 do khoá chạm hạn mức phải được nhận ra, để dừng cả lô thay vì ghi hàng nghìn dòng lỗi."""
+    from src.stage_a.a2_generate import is_key_limit
+
+    class PermissionDeniedError(Exception):
+        pass
+
+    assert is_key_limit(PermissionDeniedError("Error code: 403 - {'message': 'Key limit exceeded (total limit)'}"))
+    assert not is_key_limit(PermissionDeniedError("403 forbidden region"))
+    assert not is_key_limit(RuntimeError("Key limit exceeded"))       # sai loại lỗi thì không tính
+
+
+def test_trajectory_files_lists_only_existing(cfg, tmp_path):
+    from src.stage_a.a2_generate import all_trajectory_files
+    files = cfg["stage_a_files"]
+    (tmp_path / "trajectories.deepseek.jsonl").write_text("", encoding="utf-8")
+    got = [p.name for p in all_trajectory_files(tmp_path, files)]
+    assert got == ["trajectories.deepseek.jsonl"]                     # không liệt kê trajectories.jsonl không tồn tại
