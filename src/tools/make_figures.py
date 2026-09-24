@@ -142,10 +142,11 @@ def build_pipeline() -> str:
     frame(120, 720, 1804, 560, PUR)
     header(1880, 795, "Stage B:", "per student × per method", anchor="end")
     # "exact search": chọn lọc bằng duyệt hết mọi tập con cỡ k (tối đa 84), không dùng tham lam, vì Div không
-    # submodular. Số mẫu: 1.896 câu còn lại sau lọc đáp án, trừ 9 câu tụt dưới 3 ứng viên khi bỏ các chuỗi
-    # không có điểm giám khảo, còn 1.887 câu × 3 = 5.661.
+    # submodular. Số mẫu (cập nhật 23/09 sau khi thêm so tương đương sympy vào bộ chấm): 1.899 câu còn lại
+    # sau lọc đáp án, trừ 9 câu tụt dưới 3 ứng viên khi bỏ các chuỗi không có điểm giám khảo, còn
+    # 1.890 câu × 3 = 5.670.
     for cx, (a, b) in zip(BX, [("Fit(t, m)", "once per student"), ("exact search", "max F(S, m)"),
-                               ("5,661 samples", "k = 3 per question"), ("QLoRA", "fine-tuning")]):
+                               ("5,670 samples", "k = 3 per question"), ("QLoRA", "fine-tuning")]):
         box(cx, BY, BW, BH, PUR_BG, PUR, PUR_TX, a, b)
     chain(BX, BY + BH / 2, BW)
 

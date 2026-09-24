@@ -1,5 +1,4 @@
-"""
-Tách, chuẩn hoá và so khớp đáp án cuối theo quy ước chấm của PRM800K / MATH.
+"""Tách, chuẩn hoá và so khớp đáp án cuối theo quy ước chấm của PRM800K / MATH.
 
 Đây là bản cài đặt lại theo đúng các bước chuẩn hoá của Hendrycks (MATH) và bộ chấm của PRM800K,
 KHÔNG phải bản sao nguyên văn. Bộ chấm gốc còn thử tương đương ký hiệu bằng sympy, bản này thì không:
@@ -180,6 +179,114 @@ def _to_number(s: str) -> Fraction | None:
     return None
 
 
+# ---------------------------------------------------------------- so tương đương bằng ký hiệu
+# Thêm 23/09/2026. Trước đó bộ chấm chỉ so chuỗi đã chuẩn hoá và so hai số hữu tỉ, nên hai biểu thức
+# đúng nhưng viết khác dạng bị tính là SAI, ví dụ 2\sqrt{3} và \sqrt{12}. PRM800K dùng sympy đúng cho
+# việc này, nên thêm vào là tiến GẦN bài gốc hơn chứ không phải nới lỏng tiêu chí.
+# Chỉ chạy sau khi hai phép so trước đã thất bại, nên không làm chậm phần lớn trường hợp.
+
+_LATEX_FIXES = [
+    (re.compile(r"\\left|\\right"), ""),
+    (re.compile(r"\\(?:cdot|times)"), "*"),
+    (re.compile(r"\\pi\b"), "pi"),
+    (re.compile(r"\\(?:mathrm|text|mbox)\{([^{}]*)\}"), r"\1"),
+    (re.compile(r"[{}]"), ""),
+    (re.compile(r"\^"), "**"),
+    (re.compile(r"\\[a-zA-Z]+"), ""),          # lệnh LaTeX còn sót thì bỏ
+    (re.compile(r"(\d)\s*\("), r"\1*("),        # 2(x+1) -> 2*(x+1)
+    (re.compile(r"(\d)\s*(sqrt|pi)"), r"\1*\2"),
+    (re.compile(r"\)\s*\("), ")*("),
+]
+
+# Bất kỳ chữ cái nào còn sót sau khi bỏ sqrt và pi, cùng dấu so sánh, dấu ba chấm, dấu phẩy: đáp án dạng
+# câu chữ, toạ độ hay danh sách. Không so bằng sympy.
+# Vì sao chặn MỌI chữ cái chứ không chỉ chữ dài: '4 \text{ and } -4' sau khi bỏ lệnh LaTeX thành
+# '4 and -4', mà sympy đọc 'and' như toán tử logic của Python và trả về -4, tức chấm ĐÚNG nhầm.
+_SYMPY_UNSAFE = re.compile(r"[a-zA-Z]|[=<>]|\.\.\.|,")
+
+
+def _read_group(s: str, i: int) -> tuple[str, int] | None:
+    """Đọc một nhóm {...} bắt đầu tại i, đếm ngoặc để chịu được ngoặc lồng nhau."""
+    if i >= len(s) or s[i] != "{":
+        return None
+    depth = 0
+    for j in range(i, len(s)):
+        if s[j] == "{":
+            depth += 1
+        elif s[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return s[i + 1:j], j + 1
+    return None
+
+
+def _expand_macros(t: str) -> str:
+    """Đổi \\frac và \\sqrt sang dạng ngoặc tròn. Biểu thức chính quy không làm được vì ngoặc lồng nhau,
+    ví dụ \\frac{1}{\\sqrt{2}}. Lặp cho tới khi không còn thay được gì, để xử lý nhiều tầng lồng."""
+    for _ in range(6):
+        out, i, changed = [], 0, False
+        while i < len(t):
+            m = re.match(r"\\[dt]?frac|\\sqrt", t[i:])
+            if not m:
+                out.append(t[i]); i += 1; continue
+            head = m.group(0); j = i + len(head)
+            if head.endswith("sqrt"):
+                root = None
+                if j < len(t) and t[j] == "[":
+                    k = t.find("]", j)
+                    if k > 0:
+                        root, j = t[j + 1:k], k + 1
+                g = _read_group(t, j)
+                if g is None:
+                    out.append(t[i]); i += 1; continue
+                body, j = g
+                out.append(f"(({body})**(1/({root})))" if root else f"sqrt({body})")
+            else:
+                g1 = _read_group(t, j)
+                g2 = _read_group(t, g1[1]) if g1 else None
+                if g2 is None:
+                    out.append(t[i]); i += 1; continue
+                out.append(f"(({g1[0]})/({g2[0]}))"); j = g2[1]
+            i, changed = j, True
+        t = "".join(out)
+        if not changed:
+            break
+    return t
+
+
+def _to_sympy_text(s: str) -> str | None:
+    t = (s or "").strip().replace("\\%", "").replace("%", "").replace("$", "").replace(",", "")
+    t = _expand_macros(t)
+    for pat, rep in _LATEX_FIXES:
+        t = pat.sub(rep, t)
+    t = t.strip()
+    if not t or len(t) > 80:
+        return None
+    if _SYMPY_UNSAFE.search(t.replace("sqrt", "").replace("pi", "")):
+        return None
+    return t
+
+
+def sympy_equiv(a: str, b: str) -> bool:
+    """True nếu hai biểu thức bằng nhau về ký hiệu. Gặp biểu thức lạ thì trả False, không ném lỗi."""
+    ta, tb = _to_sympy_text(a), _to_sympy_text(b)
+    if ta is None or tb is None or ta == tb:
+        return False
+    try:
+        from sympy import simplify
+        from sympy.parsing.sympy_parser import parse_expr
+
+        ea, eb = parse_expr(ta), parse_expr(tb)
+        if ea.free_symbols or eb.free_symbols:   # còn ẩn số thì không kết luận, tránh chấm đúng nhầm
+            return False
+        d = simplify(ea - eb)
+        if d.is_zero:
+            return True
+        return abs(complex(d)) < 1e-9
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def is_equiv(pred: str | None, gold: str | None) -> bool:
     if pred is None or gold is None:
         return False
@@ -189,7 +296,11 @@ def is_equiv(pred: str | None, gold: str | None) -> bool:
     if a == b:
         return True
     na, nb = _to_number(a), _to_number(b)
-    return na is not None and nb is not None and na == nb
+    if na is not None and nb is not None and na == nb:
+        return True
+    # Thử cả dạng thô lẫn dạng đã chuẩn hoá: chuẩn hoá được viết cho so chuỗi nên đôi khi làm hỏng cú pháp
+    # LaTeX, ví dụ \sqrt[3]{27} bị chèn thêm ngoặc. Dạng thô giữ nguyên cú pháp cho sympy đọc.
+    return sympy_equiv(pred, gold) or sympy_equiv(a, b)
 
 
 @dataclass(frozen=True)

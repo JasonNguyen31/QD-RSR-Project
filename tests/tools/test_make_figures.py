@@ -15,7 +15,7 @@ def _stats(**groups):
 def test_pipeline_is_valid_svg_with_all_boxes():
     svg = mf.build_pipeline()
     ET.fromstring(svg)                                   # cú pháp XML hợp lệ
-    for word in ("Stage A:", "Stage B:", "Stage C:", "Fit(t, m)", "exact search", "5,661 samples", "QLoRA",
+    for word in ("Stage A:", "Stage B:", "Stage C:", "Fit(t, m)", "exact search", "5,670 samples", "QLoRA",
                  "next method", "next student", "filtered candidates", "cached Qual(t)"):
         assert word in svg, word
 
