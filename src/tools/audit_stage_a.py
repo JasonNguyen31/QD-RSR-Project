@@ -29,13 +29,19 @@ class Audit:
         self.rows.append((ok, name, detail))
         return ok
 
+    def skip(self, name: str, detail: str) -> None:
+        """Phép kiểm tra không áp dụng được vì thiếu file. Khác với HỎNG: đây không phải lỗi."""
+        self.rows.append((None, name, detail))
+
     def report(self) -> int:
         w = max(len(n) for _, n, _ in self.rows) + 2
-        bad = 0
+        bad = sum(1 for ok, _, _ in self.rows if ok is False)
+        skipped = sum(1 for ok, _, _ in self.rows if ok is None)
         for ok, name, detail in self.rows:
-            bad += not ok
-            print(f"  {'ĐẠT ' if ok else 'HỎNG'}  {name:<{w}}{detail}")
-        print(f"\n{len(self.rows) - bad}/{len(self.rows)} phép kiểm tra đạt")
+            tag = "BỎ QUA" if ok is None else ("ĐẠT  " if ok else "HỎNG ")
+            print(f"  {tag} {name:<{w}}{detail}")
+        done = len(self.rows) - skipped
+        print(f"\n{done - bad}/{done} phép kiểm tra đạt" + (f", {skipped} bỏ qua" if skipped else ""))
         if bad:
             print("Có phép kiểm tra HỎNG: chạy lại bước tương ứng trước khi sang Giai đoạn B.")
         return bad
@@ -64,33 +70,46 @@ def main(argv: Sequence[str] | None = None) -> int:
     groups = Counter(f"{q['source']}" + (f"-L{q['level']}" if q.get("level") else "") for q in qs)
     a.check(True, "thành phần theo nhóm", dict(groups))
 
-    # ---- trajectories
+    # ---- trajectories và labels
+    # Máy chạy Giai đoạn B chỉ cần candidates, quality và embeddings, nên thường KHÔNG có file chuỗi và
+    # file nhãn. Thiếu chúng là bình thường, không phải lỗi, nên bỏ qua thay vì báo hỏng.
     traj_files = all_trajectory_files(wd, files)
     trajs = [t for p in traj_files for t in read_jsonl(p)]
     tids = [t["tid"] for t in trajs]
-    a.check(len(tids) == len(set(tids)), "tid không trùng giữa các lô", f"{len(traj_files)} file, {len(tids)} chuỗi")
-    want = len(qs) * n_teachers * n_samples
-    a.check(len(tids) == want, "đủ số chuỗi", f"{len(tids)}/{want}")
-    per_q = Counter(split_tid(t)[0] for t in tids)
-    short = [q for q in qids if per_q[q] != n_teachers * n_samples]
-    a.check(not short, "mọi câu hỏi đủ chuỗi", f"{len(short)} câu thiếu" if short else "")
-    prompts = {t.get("prompt_id") for t in trajs}
-    a.check(len(prompts) == 1, "cùng một prompt cho mọi chuỗi", str(prompts))
+    if trajs:
+        a.check(len(tids) == len(set(tids)), "tid không trùng giữa các lô",
+                f"{len(traj_files)} file, {len(tids)} chuỗi")
+        want = len(qs) * n_teachers * n_samples
+        a.check(len(tids) == want, "đủ số chuỗi", f"{len(tids)}/{want}")
+        per_q = Counter(split_tid(t)[0] for t in tids)
+        short = [q for q in qids if per_q[q] != n_teachers * n_samples]
+        a.check(not short, "mọi câu hỏi đủ chuỗi", f"{len(short)} câu thiếu" if short else "")
+        prompts = {t.get("prompt_id") for t in trajs}
+        a.check(len(prompts) == 1, "cùng một prompt cho mọi chuỗi", str(prompts))
+    else:
+        a.skip("bốn phép trên file chuỗi", "không có trajectories.*.jsonl — bình thường ở máy Giai đoạn B")
 
-    # ---- labels
     labels = read_jsonl(wd / files["labels"])
+    if labels:
+        lab = {l["tid"]: l for l in labels}
+        if trajs:
+            a.check(set(lab) == set(tids), "nhãn phủ đúng tập chuỗi", f"{len(lab)} nhãn")
+        bad_trunc = [l for l in labels if l["reason"] == "truncated" and l["correct"]]
+        a.check(not bad_trunc, "chuỗi bị cắt luôn tính là sai", f"{len(bad_trunc)} vi phạm" if bad_trunc else "")
+        bad_reason = [l for l in labels if l["correct"] != (l["reason"] == "match")]
+        a.check(not bad_reason, "cờ đúng/sai khớp với lý do", f"{len(bad_reason)} vi phạm" if bad_reason else "")
+    else:
+        a.skip("ba phép trên file nhãn", "không có labels.jsonl — bình thường ở máy Giai đoạn B")
+
+    # ---- ứng viên phải là chuỗi đúng: chỉ kiểm được khi có nhãn
     lab = {l["tid"]: l for l in labels}
-    a.check(set(lab) == set(tids), "nhãn phủ đúng tập chuỗi", f"{len(lab)} nhãn")
-    bad_trunc = [l for l in labels if l["reason"] == "truncated" and l["correct"]]
-    a.check(not bad_trunc, "chuỗi bị cắt luôn tính là sai", f"{len(bad_trunc)} vi phạm" if bad_trunc else "")
-    bad_reason = [l for l in labels if l["correct"] != (l["reason"] == "match")]
-    a.check(not bad_reason, "cờ đúng/sai khớp với lý do", f"{len(bad_reason)} vi phạm" if bad_reason else "")
 
     # ---- candidates và kept_qids
     cands = read_jsonl(wd / files["candidates"])
     ctids = [c["tid"] for c in cands]
     a.check(len(ctids) == len(set(ctids)), "ứng viên không trùng", f"{len(ctids)} ứng viên")
-    a.check(all(lab[t]["correct"] for t in ctids if t in lab), "mọi ứng viên đều là chuỗi đúng")
+    if labels:
+        a.check(all(lab[t]["correct"] for t in ctids if t in lab), "mọi ứng viên đều là chuỗi đúng")
     import json
     # a3 ghi {"min_correct": ..., "qids": [...]}, không phải một danh sách trần. Đọc nhầm thì set() lấy ra
     # tên hai khoá chứ không phải mã câu hỏi, và mọi phép kiểm tra phía sau đều báo hỏng oan.

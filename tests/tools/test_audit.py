@@ -92,3 +92,14 @@ def test_reads_kept_qids_written_as_object_or_plain_list(tmp_path, capsys):
     write_json(wd / "kept_qids.json", ["q1", "q2"])
     code, out = run(wd, capsys)
     assert code == 0 and "ứng viên đúng bằng tập câu được giữ" in out
+
+
+def test_machine_without_trajectories_reports_skipped_not_failed(tmp_path, capsys):
+    """Máy Giai đoạn B chỉ có candidates, quality và embeddings. Thiếu chuỗi và nhãn KHÔNG phải lỗi."""
+    wd = build(tmp_path)
+    for f in list(wd.glob("trajectories.*.jsonl")) + [wd / "labels.jsonl"]:
+        f.unlink()
+    code, out = run(wd, capsys)
+    assert code == 0, "thiếu file chuỗi không được tính là hỏng"
+    assert "BỎ QUA" in out and "bỏ qua" in out
+    assert "Tập dùng cho Giai đoạn B: 2 câu hỏi" in out
