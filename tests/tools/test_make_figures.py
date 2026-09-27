@@ -82,7 +82,7 @@ def _stage_a(tmp_path):
     write_jsonl(wd / "trajectories.qwen72b.jsonl", [t for t in trajs if t["teacher"] == "qwen72b"])
     write_jsonl(wd / "quality.jsonl", quality)
     write_json(wd / "embed_probe.json", {
-        "same_teacher": {"median": 0.308}, "cross_teacher": {"median": 0.465},
+        "within_teacher": {"median": 0.308}, "across_teacher": {"median": 0.465},
         "by_group": {"gsm8k": {"median": 0.348}, "math-L5": {"median": 0.460}}})
     write_jsonl(wd / "fit.test.jsonl", [
         {"tid": f"math_1|deepseek|{i}", "rsr": 5.0 + i, "grape": -1.0 - i, "local_nat": -1.1 - i,
@@ -127,3 +127,23 @@ def test_report_group_lists_every_report_figure():
     from src.tools.make_figures import FIGURES, REPORT
 
     assert set(REPORT) <= set(FIGURES) and len(REPORT) == 6
+
+
+def test_distance_figure_reads_the_keys_a5_actually_writes(tmp_path):
+    """Hồi quy: hình từng đọc nhầm tên khoá nên hai cột đầu ra 0 mà không báo lỗi."""
+    from src.common.config import load_config
+    from src.tools import make_figures as mf
+
+    svg = mf.build_distance(load_config(), str(_stage_a(tmp_path)))
+    assert ">0,308<" in svg and ">0,465<" in svg
+
+
+def test_distance_figure_refuses_probe_without_teacher_split(tmp_path):
+    import json
+    from src.common.config import load_config
+    from src.tools import make_figures as mf
+
+    wd = _stage_a(tmp_path)
+    (wd / "embed_probe.json").write_text(json.dumps({"by_group": {"gsm8k": {"median": 0.3}}}))
+    with pytest.raises(SystemExit):
+        mf.build_distance(load_config(), str(wd))

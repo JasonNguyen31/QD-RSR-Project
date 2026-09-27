@@ -282,6 +282,11 @@ def build_distribution(stats: Mapping) -> str:
 
 
 # ================================================================ dụng cụ cho biểu đồ cột
+def vn(v: float) -> str:
+    """Số theo cách viết tiếng Việt: dấu phẩy thập phân."""
+    return f"{v:g}".replace(".", ",")
+
+
 def grouped_bars(title: str, groups: Sequence[str], series: Sequence[tuple[str, str, Sequence[float]]],
                  vmax: float, unit: str = "%", w: int = 1500, h: int = 900) -> str:
     """Biểu đồ cột nhóm. series là danh sách (tên, màu, giá trị theo từng nhóm)."""
@@ -293,7 +298,7 @@ def grouped_bars(title: str, groups: Sequence[str], series: Sequence[tuple[str, 
     s.line(left, top, left, top + plot_h, GREY, 3)
     for frac in (0.0, 0.5, 1.0):                      # ba vạch chia là đủ, nhiều hơn thì rối
         y = top + plot_h - frac * plot_h
-        s.text(left - 20, y + 11, f"{vmax * frac:g}{unit}", size=28, color=GREY, anchor="end")
+        s.text(left - 20, y + 11, vn(round(vmax * frac, 3)) + unit, size=28, color=GREY, anchor="end")
     gw = plot_w / len(groups)
     bw = min(96, gw / (len(series) + 1.4))
     for gi, g in enumerate(groups):
@@ -305,7 +310,7 @@ def grouped_bars(title: str, groups: Sequence[str], series: Sequence[tuple[str, 
             x = x0 + si * bw
             s.add(f'<rect x="{x:.1f}" y="{top + plot_h - bh:.1f}" width="{bw - 8:.1f}" height="{bh:.1f}" '
                   f'fill="{color}" rx="4"/>')
-            s.text(x + (bw - 8) / 2, top + plot_h - bh - 16, f"{v:g}", size=26, color=INK, anchor="middle")
+            s.text(x + (bw - 8) / 2, top + plot_h - bh - 16, vn(v), size=26, color=INK, anchor="middle")
         s.text(cx, top + plot_h + 48, g, size=30, color=DIM, anchor="middle")
     lx = left
     for name, color, _ in series:
@@ -331,7 +336,7 @@ def load_labels(cfg, workdir: str) -> tuple[list, dict]:
 
 
 TEACHER_COLORS = [(GRN, "Llama-3.3-70B", "llama70b"), (BLUE, "DeepSeek-V3", "deepseek"),
-                  (PUR, "Qwen2.5-72B", "qwen72b")]
+                  (PUR, "Qwen2.5-VL-72B", "qwen72b")]
 GROUPS = ["gsm8k", "math-L3", "math-L4", "math-L5"]
 GROUP_LABELS = ["GSM8K", "MATH mức 3", "MATH mức 4", "MATH mức 5"]
 
@@ -400,7 +405,7 @@ def build_judge(cfg, workdir: str) -> str:
     llm = [r["llm_score"] for r in rows]
     words = [r["n_words"] for r in rows]
 
-    s = Svg(1500, 900)
+    s = Svg(1500, 980)                                   # đủ chỗ cho ba dòng tương quan bên dưới
     left, top, plot_w, plot_h = 170, 120, 1270, 560
     s.text(left, 60, f"Phân bố điểm giám khảo trên {len(rows):,} chuỗi".replace(",", "."), size=34, color=DIM)
     s.line(left, top + plot_h, left + plot_w, top + plot_h, GREY, 3)
@@ -416,7 +421,7 @@ def build_judge(cfg, workdir: str) -> str:
         if v:
             s.text(x + (bw - 20) / 2, top + plot_h - bh - 14, f"{v:,}".replace(",", "."),
                    size=24, color=INK, anchor="middle")
-        s.text(x + (bw - 20) / 2, top + plot_h + 44, f"{b:.1f}", size=28, color=DIM, anchor="middle")
+        s.text(x + (bw - 20) / 2, top + plot_h + 44, f"{b:.1f}".replace(".", ","), size=28, color=DIM, anchor="middle")
     y = top + plot_h + 120
     s.text(left, y, "Tương quan hạng giữa hai nửa của điểm chất lượng", size=32, color=INK, weight="600")
     for i, (name, a, b) in enumerate([("điểm quy tắc và điểm giám khảo", rule, llm),
@@ -431,13 +436,17 @@ def build_judge(cfg, workdir: str) -> str:
 def build_distance(cfg, workdir: str) -> str:
     wd = resolve_path(cfg, workdir)
     probe = json.loads((wd / "embed_probe.json").read_text(encoding="utf-8"))
-    same, cross = probe.get("same_teacher", {}), probe.get("cross_teacher", {})
+    # a5_embed ghi hai khoá within_teacher và across_teacher; hai tên cũ chỉ giữ để đọc file probe đời trước
+    same = probe.get("within_teacher") or probe.get("same_teacher") or {}
+    cross = probe.get("across_teacher") or probe.get("cross_teacher") or {}
+    if "median" not in same or "median" not in cross:
+        raise SystemExit("embed_probe.json thiếu within_teacher hoặc across_teacher. Chạy: a5_embed --probe --reuse")
     by_group = probe.get("by_group", {})
     if not by_group:
         raise SystemExit("embed_probe.json chưa có phần by_group. Chạy: a5_embed --probe --reuse")
     series = [("trung vị", BLUE, [round(same.get("median", 0), 3), round(cross.get("median", 0), 3)]
                + [round(by_group[g]["median"], 3) for g in GROUPS if g in by_group])]
-    groups = ["Cùng mô hình dạy", "Khác mô hình dạy"] + [GROUP_LABELS[GROUPS.index(g)] for g in GROUPS
+    groups = ["Cùng mô hình", "Khác mô hình"] + [GROUP_LABELS[GROUPS.index(g)] for g in GROUPS
                                                           if g in by_group]
     vmax = max(series[0][2]) * 1.25
     return grouped_bars("Khoảng cách biểu diễn trung vị giữa hai chuỗi của cùng một câu hỏi",
@@ -508,8 +517,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("figure", choices=list(FIGURES) + ["all", "report"])
     ap.add_argument("--outdir", default="docs/figures")
-    ap.add_argument("--stats", default="data/pilot/run2_boxed/stats.json",
-                    help="stats.json cho Hình 2. Khi có lô thật thì đổi sang data/stage_a/stats.json")
+    ap.add_argument("--stats", default="data/stage_a/stats.json", help="stats.json cho Hình 2")
     ap.add_argument("--workdir", default="data/stage_a", help="thư mục dữ liệu cho các hình báo cáo")
     ap.add_argument("--fit", default="fit.qwen1_5b_base.jsonl", help="file điểm b1 cho hình tương quan")
     args = ap.parse_args(argv)
