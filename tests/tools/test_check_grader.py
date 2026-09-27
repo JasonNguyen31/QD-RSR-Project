@@ -13,7 +13,7 @@ def test_matching_agreement_and_disagreement():
         row("t1", "9", "9", True),
         row("t2", "8", "9", False),
         row("t3", r"\frac{1}{2}", "0.5", True),     # dạng khác nhau, bộ mới vẫn cho khớp
-        row("t4", "x+1", "1+x", True),              # bộ mới KHÔNG có sympy nên coi là lệch
+        row("t4", "x+1", "1+x", True),              # sympy chỉ áp cho biểu thức số, có biến thì vẫn lệch
         row("t5", None, "9", False),                # cũ không tách được
         row("t6", "9", None, None),                 # thiếu trường
     ]

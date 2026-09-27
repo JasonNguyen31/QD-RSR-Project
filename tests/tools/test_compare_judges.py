@@ -23,6 +23,16 @@ def test_pair_agreement_counts_ties_separately():
     assert r["rate"] == pytest.approx(2 / 3)
 
 
+def test_pair_agreement_counts_ties_of_each_judge_independently():
+    """Hồi quy 28/09: cặp mà CẢ HAI giám khảo cùng hoà phải được tính vào tỷ lệ hoà của cả hai.
+    Bản cũ dừng ở A nên B mất cặp đó, làm tỷ lệ hoà của giám khảo thứ hai thấp đi."""
+    by_q = {"q": [(0.9, 0.9), (0.9, 0.9), (0.5, 0.4)]}   # cặp đầu: cả hai hoà
+    r = pair_agreement(by_q)
+    assert r["pairs"] == 3 and r["tie_a"] == 1 and r["tie_b"] == 1
+    assert r["tie_b_rate"] == pytest.approx(1 / 3)
+    assert r["comparable"] == 2 and r["same"] == 2
+
+
 def test_top1_agreement_allows_tie_at_top():
     by_q = {"q1": [(0.9, 0.7), (0.5, 0.4)],          # cùng chọn chuỗi đầu
             "q2": [(0.9, 0.3), (0.5, 0.8)],          # chọn khác nhau

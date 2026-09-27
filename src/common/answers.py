@@ -1,9 +1,10 @@
 """Tách, chuẩn hoá và so khớp đáp án cuối theo quy ước chấm của PRM800K / MATH.
 
 Đây là bản cài đặt lại theo đúng các bước chuẩn hoá của Hendrycks (MATH) và bộ chấm của PRM800K,
-KHÔNG phải bản sao nguyên văn. Bộ chấm gốc còn thử tương đương ký hiệu bằng sympy, bản này thì không:
-hai biểu thức đúng nhưng viết khác thứ tự (x^2+1 và 1+x^2) sẽ bị chấm sai. Sai lệch này thiên về loại bớt
-chuỗi đúng, áp dụng đồng đều cho mọi phương án nên không làm lệch so sánh. Cần nêu trong paper khi mô tả cách chấm.
+KHÔNG phải bản sao nguyên văn. Từ 23/09/2026 có thêm bước so tương đương bằng sympy, nhưng CHỈ cho biểu thức
+số không chứa chữ cái, dấu so sánh hay dấu phẩy (xem _SYMPY_UNSAFE): 2^{-98} và \\frac{1}{2^{98}} được chấm khớp,
+còn x+1 và 1+x vẫn bị chấm lệch. Sai lệch còn lại thiên về loại bớt chuỗi đúng, áp dụng đồng đều cho mọi phương án
+nên không làm lệch so sánh. Paper phải mô tả đúng giới hạn này.
 
 Quy ước: chỉ \\boxed{...} cuối cùng trong văn bản được coi là đáp án của mô hình (prompt đã yêu cầu như vậy).
 Không có \\boxed thì chuỗi bị chấm sai với lý do "no_boxed".

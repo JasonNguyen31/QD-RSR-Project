@@ -49,22 +49,28 @@ def spearman(a: Sequence[float], b: Sequence[float]) -> float | None:
 
 
 def pair_agreement(by_q: Mapping[str, list[tuple[float, float]]]) -> dict:
-    """Với mỗi cặp chuỗi cùng câu hỏi: hai giám khảo có xếp cùng chiều không."""
-    same = diff = tie_a = tie_b = 0
-    for pairs in by_q.values():
-        for i in range(len(pairs)):
-            for j in range(i + 1, len(pairs)):
-                (a1, b1), (a2, b2) = pairs[i], pairs[j]
-                if a1 == a2:
-                    tie_a += 1
-                    continue
-                if b1 == b2:
-                    tie_b += 1
+    """Với mỗi cặp chuỗi cùng câu hỏi: hai giám khảo có xếp cùng chiều không.
+
+    tie_a và tie_b đếm ĐỘC LẬP trên mọi cặp (sửa 28/09/2026). Bản trước chỉ đếm cặp hoà của B khi A
+    không hoà cặp đó, nên tỷ lệ hoà của B bị thấp đi (Flash-Lite ra 7% thay vì 22,5%).
+    Đồng thuận chỉ tính trên các cặp mà CẢ HAI giám khảo đều không hoà.
+    """
+    same = diff = tie_a = tie_b = pairs = 0
+    for items in by_q.values():
+        for i in range(len(items)):
+            for j in range(i + 1, len(items)):
+                (a1, b1), (a2, b2) = items[i], items[j]
+                pairs += 1
+                ta, tb = a1 == a2, b1 == b2
+                tie_a += ta
+                tie_b += tb
+                if ta or tb:
                     continue
                 same += (a1 > a2) == (b1 > b2)
                 diff += (a1 > a2) != (b1 > b2)
     total = same + diff
-    return {"same": same, "diff": diff, "tie_a": tie_a, "tie_b": tie_b,
+    return {"same": same, "diff": diff, "tie_a": tie_a, "tie_b": tie_b, "pairs": pairs,
+            "tie_a_rate": tie_a / pairs if pairs else None, "tie_b_rate": tie_b / pairs if pairs else None,
             "rate": same / total if total else None, "comparable": total}
 
 
@@ -156,8 +162,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if pa["rate"] is None:
         print("   Không có cặp nào so được. Chạy lại a4 với --limit-questions để có nhiều chuỗi cùng câu.")
     else:
-        print(f"   Đồng thuận {pa['same']}/{pa['comparable']} = {pa['rate']:.1%}  "
-              f"(A hoà {pa['tie_a']} cặp, B hoà {pa['tie_b']} cặp, các cặp hoà không tính)")
+        print(f"   Đồng thuận {pa['same']}/{pa['comparable']} = {pa['rate']:.1%} "
+              f"(chỉ tính các cặp cả hai giám khảo đều không hoà)")
+        print(f"   Tỷ lệ cặp bị hoà trên {pa['pairs']} cặp: A {pa['tie_a_rate']:.1%}, B {pa['tie_b_rate']:.1%}")
 
     t1 = top1_agreement(multi)
     if t1["rate"] is not None:

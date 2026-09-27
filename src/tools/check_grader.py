@@ -1,15 +1,18 @@
-"""Đối chiếu bộ chấm mới (src/common/answers.py) với nhãn của lô pilot cũ.
+"""Đối chiếu bộ chấm mới (src/common/answers.py) với nhãn của lô pilot đầu tiên (run1_original).
 
     python -m src.tools.check_grader
 
-Lý do cần: answers.py là bản cài lại theo quy ước MATH/PRM800K, KHÔNG có bước so tương đương bằng sympy,
-nên hai biểu thức đúng nhưng viết khác dạng có thể bị chấm sai. Nhãn pilot cũ đã được kiểm tra tay và ghi nhận
-trong Notion, nên dùng làm mốc đối chiếu.
+Bộ chấm mới cài lại quy ước MATH/PRM800K và từ 23/09/2026 có so tương đương bằng sympy, nhưng chỉ cho biểu
+thức số không chứa chữ cái (xem _SYMPY_UNSAFE trong answers.py). Nhãn cũ do mã pilot đầu tiên chấm, dùng làm mốc.
+
+GIỚI HẠN QUAN TRỌNG của phép đối chiếu này: file nhãn cũ chỉ lưu các chuỗi ĐÚNG (is_correct luôn True),
+vì mã pilot cũ bỏ chuỗi sai trước khi ghi. Vì vậy phép so chỉ phát hiện được lỗi chấm nhầm đúng thành sai
+(âm tính giả), KHÔNG phát hiện được lỗi chấm nhầm sai thành đúng (dương tính giả). Chương trình in ra số nhãn
+đúng và sai để thấy rõ điều này. Kết quả ngày 28/09/2026: 1.189/1.189 khớp, cả 1.189 đều là nhãn đúng.
 
 Hai phép so, tách riêng vì chúng kiểm tra hai phần khác nhau:
   1. SO KHỚP  is_equiv(pred_answer, gold_answer) với is_correct của nhãn cũ.
      Chỉ dùng hai trường đã tách sẵn, nên không phụ thuộc prompt cũ dùng '#### ' hay '\\boxed{}'.
-     Đây là phép quan trọng: nó đo đúng phần thiếu sympy.
   2. TÁCH ĐÁP ÁN  last_boxed(trajectory) với pred_answer của nhãn cũ, chỉ trên các chuỗi thật sự có \\boxed.
      Lệch ở đây thường là do bộ tách cũ dùng quy ước khác, không nhất thiết là lỗi.
 
@@ -82,7 +85,8 @@ def report(name: str, tally: Counter, diffs: Sequence[Mapping], show: int) -> No
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--files", nargs="*", default=["data/pilot/labeled.jsonl", "data/pilot/labeled_math.jsonl"])
+    ap.add_argument("--files", nargs="*", default=["data/pilot/run1_original/labeled.jsonl",
+                                                    "data/pilot/run1_original/labeled_math.jsonl"])
     ap.add_argument("--show", type=int, default=15, help="số trường hợp lệch in ra mỗi phép")
     args = ap.parse_args(argv)
 
@@ -99,6 +103,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not rows:
         raise SystemExit("Không đọc được nhãn cũ nào.")
 
+    pos = sum(1 for r in rows if r.get(F_OK) is True)
+    neg = sum(1 for r in rows if r.get(F_OK) is False)
+    print(f"nhãn cũ: {pos} đúng, {neg} sai")
+    if neg == 0:
+        print("LƯU Ý: không có nhãn sai nào, nên phép 1 chỉ kiểm được lỗi chấm nhầm đúng thành sai.")
     m_tally, m_diffs = compare_matching(rows)
     report("PHÉP 1: so khớp đáp án (quan trọng)", m_tally, m_diffs, args.show)
     e_tally, e_diffs = compare_extraction(rows)

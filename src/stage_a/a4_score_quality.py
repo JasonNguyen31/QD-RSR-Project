@@ -1,4 +1,9 @@
-"""a4_score_quality: chấm Qual(t) = alpha * rule_score(t) + (1 - alpha) * llm_score(t).
+"""a4_score_quality: chấm Qual(t) = alpha * rule_norm(t) + (1 - alpha) * llm_norm(t).
+
+rule_norm và llm_norm là rule_score và llm_score đã chuẩn hoá min-max TRONG TỪNG CÂU HỎI (sửa 28/09/2026).
+Lý do: rule_score là điểm z (trải khoảng -0,7 đến 7,6), llm_score nằm trong [0, 1]; trộn thẳng thì trong cùng
+một câu hỏi độ lệch chuẩn của nửa quy tắc gấp khoảng 5 lần nửa giám khảo, nên Qual gần như chỉ là điểm quy tắc
+(tương quan hạng 0,90 so với 0,19). Chuẩn hoá theo câu hỏi đưa hai nửa về cùng thang, đúng như Fit ở b2_select.
 
     python -m src.stage_a.a4_score_quality --workdir data/pilot/run2_boxed --rule-only
     python -m src.stage_a.a4_score_quality --workdir data/pilot/run2_boxed --limit 30
@@ -14,7 +19,8 @@ Chạy trên máy Mac: phần rule thuần CPU, phần giám khảo thuần gọ
 Hai lưu ý về cách tính:
   - rule_score dùng z-score trên TOÀN BỘ tập nên phải chấm cả tập một lượt. Nếu chấm từng phần rồi ghép,
     kết quả sẽ khác. Vì vậy quality.jsonl luôn được tính lại toàn bộ, còn judge.jsonl mới là thứ ghi dần.
-  - qual ở đây CHƯA chuẩn hoá về [0, 1]. Bước min-max theo từng câu hỏi diễn ra ở b2_select.
+  - qual nằm trong [0, 1] theo từng câu hỏi. Chạy lại --rule-only là tính lại quality.jsonl từ judge.jsonl
+    sẵn có, KHÔNG gọi giám khảo.
 """
 from __future__ import annotations
 
@@ -301,20 +307,37 @@ def run_judge(cfg: Mapping, cands: Sequence[Mapping], questions: Mapping[str, Ma
     return {"judged": judge.ok, "failed": judge.failed, "seconds": judge.seconds}
 
 
+def minmax_within(values: Sequence[float]) -> list[float]:
+    """Đưa về [0, 1]. Mọi giá trị bằng nhau thì trả 0,5 cho tất cả, tức nửa đó không phân biệt được ai."""
+    lo, hi = min(values), max(values)
+    if hi - lo < 1e-12:
+        return [0.5] * len(values)
+    return [(v - lo) / (hi - lo) for v in values]
+
+
 def combine(cands: Sequence[Mapping], judge_rows: Sequence[Mapping], alpha: float) -> list[dict]:
-    """Ghép rule và judge. Chuỗi chưa có điểm giám khảo thì llm_score = None và qual = None."""
+    """Ghép rule và judge. Chuỗi chưa có điểm giám khảo thì llm_score, qual và hai cột norm đều là None.
+
+    Min-max tính trên các chuỗi CÓ điểm giám khảo của cùng một câu hỏi, vì chuỗi thiếu điểm bị loại khỏi
+    mọi phương án; tính cả chúng thì thang của nửa quy tắc phụ thuộc vào chuỗi không bao giờ được chọn.
+    """
     scores, feats = rule_scores([c["text"] for c in cands])
     jmap = {r["tid"]: r["overall_score"] for r in judge_rows}
     out = []
     for c, rs, f in zip(cands, scores, feats):
-        llm = jmap.get(c["tid"])
-        out.append({
-            "tid": c["tid"], "qid": c["qid"],
-            "rule_score": round(rs, 6),
-            "llm_score": llm,
-            "qual": round(alpha * rs + (1 - alpha) * llm, 6) if llm is not None else None,
-            "n_words": int(f["elaborated"]),
-        })
+        out.append({"tid": c["tid"], "qid": c["qid"], "rule_score": round(rs, 6),
+                    "llm_score": jmap.get(c["tid"]), "rule_norm": None, "llm_norm": None, "qual": None,
+                    "n_words": int(f["elaborated"])})
+    by_q: dict = {}
+    for r in out:
+        if r["llm_score"] is not None:
+            by_q.setdefault(r["qid"], []).append(r)
+    for rows in by_q.values():
+        rn = minmax_within([r["rule_score"] for r in rows])
+        ln = minmax_within([r["llm_score"] for r in rows])
+        for r, a, b in zip(rows, rn, ln):
+            r["rule_norm"], r["llm_norm"] = round(a, 6), round(b, 6)
+            r["qual"] = round(alpha * a + (1 - alpha) * b, 6)
     return out
 
 
