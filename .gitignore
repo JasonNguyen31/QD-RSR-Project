@@ -8,3 +8,7 @@ __pycache__/
 *.log
 .DS_Store
 unsloth_compiled_cache/docs/figures/*.svg
+
+# file nen tam thoi va cache sinh tu dong
+*.tar.xz
+unsloth_compiled_cache/

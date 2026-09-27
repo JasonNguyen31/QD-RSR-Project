@@ -12,6 +12,15 @@ Không để lại file SVG trung gian.
     Hình 2  distribution  Phân bố số chuỗi đúng mỗi câu theo độ khó. Biện minh cho việc đổi dữ liệu
     Hình 3  selection     Ví dụ chọn lọc trên một câu hỏi. CHƯA LÀM: cần điểm Fit, Qual, Div thật
 
+Hình cho BÁO CÁO ĐỒ ÁN (Notion mục T4), đọc thẳng từ dữ liệu thật, gọi gộp bằng `report`:
+
+    A-2  teachers      Tỷ lệ đúng theo mô hình dạy và mức độ khó
+    A-3  truncation    Tỷ lệ chuỗi bị cắt, cho thấy nó dồn vào một mô hình dạy ở bài khó
+    A-4  lengths       Phân bố độ dài chuỗi đúng, liên quan tới phương án đối chứng Token-Length
+    A-6  judge         Phân bố điểm giám khảo, kèm tương quan giữa hai nửa của điểm chất lượng
+    A-8  distance      Khoảng cách biểu diễn: cùng và khác mô hình dạy, và theo mức độ khó
+    B-1  correlation   Ma trận tương quan giữa bốn tín hiệu nội tại và độ dài
+
 Cần thư viện hệ thống cairo để xuất file:
     conda install -c conda-forge cairo      (hoặc: brew install cairo)
     pip install cairosvg
@@ -24,7 +33,11 @@ import json
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from collections import Counter, defaultdict
+
 from src.common.config import load_config, resolve_path
+from src.common.io_utils import read_jsonl
+from src.stage_a.a3_filter import group_of
 
 FONT = "Helvetica, Arial, sans-serif"
 BLUE, BLUE_BG, BLUE_TX = "#3b8ae0", "#e6f0fb", "#0f3d7a"
@@ -268,6 +281,204 @@ def build_distribution(stats: Mapping) -> str:
     return s.render()
 
 
+# ================================================================ dụng cụ cho biểu đồ cột
+def grouped_bars(title: str, groups: Sequence[str], series: Sequence[tuple[str, str, Sequence[float]]],
+                 vmax: float, unit: str = "%", w: int = 1500, h: int = 900) -> str:
+    """Biểu đồ cột nhóm. series là danh sách (tên, màu, giá trị theo từng nhóm)."""
+    s = Svg(w, h)
+    left, right, top, bottom = 150, 60, 110, 190
+    plot_w, plot_h = w - left - right, h - top - bottom
+    s.text(left, 58, title, size=34, color=DIM)
+    s.line(left, top + plot_h, w - right, top + plot_h, GREY, 3)
+    s.line(left, top, left, top + plot_h, GREY, 3)
+    for frac in (0.0, 0.5, 1.0):                      # ba vạch chia là đủ, nhiều hơn thì rối
+        y = top + plot_h - frac * plot_h
+        s.text(left - 20, y + 11, f"{vmax * frac:g}{unit}", size=28, color=GREY, anchor="end")
+    gw = plot_w / len(groups)
+    bw = min(96, gw / (len(series) + 1.4))
+    for gi, g in enumerate(groups):
+        cx = left + gw * (gi + 0.5)
+        x0 = cx - bw * len(series) / 2
+        for si, (_, color, vals) in enumerate(series):
+            v = vals[gi]
+            bh = plot_h * min(v / vmax, 1.0)
+            x = x0 + si * bw
+            s.add(f'<rect x="{x:.1f}" y="{top + plot_h - bh:.1f}" width="{bw - 8:.1f}" height="{bh:.1f}" '
+                  f'fill="{color}" rx="4"/>')
+            s.text(x + (bw - 8) / 2, top + plot_h - bh - 16, f"{v:g}", size=26, color=INK, anchor="middle")
+        s.text(cx, top + plot_h + 48, g, size=30, color=DIM, anchor="middle")
+    lx = left
+    for name, color, _ in series:
+        s.add(f'<rect x="{lx}" y="{h - 78}" width="30" height="30" fill="{color}" rx="4"/>')
+        s.text(lx + 44, h - 54, name, size=30, color=DIM)
+        lx += 70 + text_width(name, 30)
+    return s.render()
+
+
+def percentiles(xs: Sequence[float], ps: Sequence[float]) -> list[float]:
+    v = sorted(xs)
+    return [v[min(int(p * len(v)), len(v) - 1)] for p in ps] if v else [0.0] * len(ps)
+
+
+def load_labels(cfg, workdir: str) -> tuple[list, dict]:
+    wd = resolve_path(cfg, workdir)
+    files = cfg["stage_a_files"]
+    labels = read_jsonl(wd / files["labels"])
+    questions = {q["qid"]: q for q in read_jsonl(wd / files["questions"])}
+    if not labels:
+        raise SystemExit(f"Không thấy labels.jsonl trong {wd}. Chạy a3_filter trước.")
+    return labels, questions
+
+
+TEACHER_COLORS = [(GRN, "Llama-3.3-70B", "llama70b"), (BLUE, "DeepSeek-V3", "deepseek"),
+                  (PUR, "Qwen2.5-72B", "qwen72b")]
+GROUPS = ["gsm8k", "math-L3", "math-L4", "math-L5"]
+GROUP_LABELS = ["GSM8K", "MATH mức 3", "MATH mức 4", "MATH mức 5"]
+
+
+# ================================================================ Hình A-2: tỷ lệ đúng theo mô hình dạy
+def build_teachers(cfg, workdir: str) -> str:
+    labels, questions = load_labels(cfg, workdir)
+    tot: dict = defaultdict(int)
+    ok: dict = defaultdict(int)
+    for l in labels:
+        key = (l["teacher"], group_of(questions[l["qid"]]))
+        tot[key] += 1
+        ok[key] += bool(l["correct"])
+    series = [(name, color, [round(100 * ok[(t, g)] / max(tot[(t, g)], 1), 1) for g in GROUPS])
+              for color, name, t in TEACHER_COLORS]
+    return grouped_bars("Tỷ lệ chuỗi đúng theo mô hình dạy và mức độ khó", GROUP_LABELS, series, 100.0)
+
+
+# ================================================================ Hình A-3: tỷ lệ chuỗi bị cắt
+def build_truncation(cfg, workdir: str) -> str:
+    labels, questions = load_labels(cfg, workdir)
+    tot: dict = defaultdict(int)
+    cut: dict = defaultdict(int)
+    for l in labels:
+        key = (l["teacher"], group_of(questions[l["qid"]]))
+        tot[key] += 1
+        cut[key] += l["reason"] == "truncated"
+    series = [(name, color, [round(100 * cut[(t, g)] / max(tot[(t, g)], 1), 1) for g in GROUPS])
+              for color, name, t in TEACHER_COLORS]
+    vmax = max(max(v for _, _, vals in series for v in vals), 5.0)
+    return grouped_bars("Tỷ lệ chuỗi bị cắt theo mô hình dạy và mức độ khó", GROUP_LABELS, series, vmax)
+
+
+# ================================================================ Hình A-4: độ dài chuỗi đúng
+def build_lengths(cfg, workdir: str) -> str:
+    from src.stage_a.a2_generate import all_trajectory_files
+    wd = resolve_path(cfg, workdir)
+    files = cfg["stage_a_files"]
+    correct = {l["tid"] for l in read_jsonl(wd / files["labels"]) if l["correct"]}
+    by_t: dict = defaultdict(list)
+    for path in all_trajectory_files(wd, files):
+        for t in read_jsonl(path):
+            if t["tid"] in correct and t.get("completion_tokens"):
+                by_t[t["teacher"]].append(t["completion_tokens"])
+    if not by_t:
+        raise SystemExit("Không thấy file chuỗi. Hình này cần trajectories.*.jsonl trên máy có dữ liệu gốc.")
+    ps = [0.5, 0.75, 0.9, 0.99]
+    series = [(name, color, [round(v) for v in percentiles(by_t.get(t, []), ps)])
+              for color, name, t in TEACHER_COLORS]
+    vmax = max(v for _, _, vals in series for v in vals)
+    return grouped_bars("Độ dài chuỗi đúng theo mô hình dạy, số token",
+                        ["trung vị", "p75", "p90", "p99"], series, vmax, unit="")
+
+
+# ================================================================ Hình A-6: phân bố điểm giám khảo
+def build_judge(cfg, workdir: str) -> str:
+    wd = resolve_path(cfg, workdir)
+    rows = [r for r in read_jsonl(wd / "quality.jsonl") if r.get("llm_score") is not None]
+    if not rows:
+        raise SystemExit(f"Không thấy quality.jsonl có điểm giám khảo trong {wd}.")
+    bins = [round(0.1 * i, 1) for i in range(11)]
+    counts = Counter(round(round(r["llm_score"], 1), 1) for r in rows)
+    vals = [counts.get(b, 0) for b in bins]
+    from src.tools.compare_judges import spearman
+    rule = [r["rule_score"] for r in rows]
+    llm = [r["llm_score"] for r in rows]
+    words = [r["n_words"] for r in rows]
+
+    s = Svg(1500, 900)
+    left, top, plot_w, plot_h = 170, 120, 1270, 560
+    s.text(left, 60, f"Phân bố điểm giám khảo trên {len(rows):,} chuỗi".replace(",", "."), size=34, color=DIM)
+    s.line(left, top + plot_h, left + plot_w, top + plot_h, GREY, 3)
+    s.line(left, top, left, top + plot_h, GREY, 3)
+    vmax = max(vals)
+    bw = plot_w / len(bins)
+    for i, (b, v) in enumerate(zip(bins, vals)):
+        bh = plot_h * v / vmax
+        x = left + i * bw + 10
+        color = BLUE if b >= 0.9 else GREY
+        s.add(f'<rect x="{x:.1f}" y="{top + plot_h - bh:.1f}" width="{bw - 20:.1f}" height="{bh:.1f}" '
+              f'fill="{color}" rx="4"/>')
+        if v:
+            s.text(x + (bw - 20) / 2, top + plot_h - bh - 14, f"{v:,}".replace(",", "."),
+                   size=24, color=INK, anchor="middle")
+        s.text(x + (bw - 20) / 2, top + plot_h + 44, f"{b:.1f}", size=28, color=DIM, anchor="middle")
+    y = top + plot_h + 120
+    s.text(left, y, "Tương quan hạng giữa hai nửa của điểm chất lượng", size=32, color=INK, weight="600")
+    for i, (name, a, b) in enumerate([("điểm quy tắc và điểm giám khảo", rule, llm),
+                                      ("điểm quy tắc và số từ", rule, words),
+                                      ("điểm giám khảo và số từ", llm, words)]):
+        r = spearman(a, b)
+        s.text(left, y + 52 + i * 46, f"{name}: {r:+.2f}".replace(".", ","), size=30, color=DIM)
+    return s.render()
+
+
+# ================================================================ Hình A-8: khoảng cách biểu diễn
+def build_distance(cfg, workdir: str) -> str:
+    wd = resolve_path(cfg, workdir)
+    probe = json.loads((wd / "embed_probe.json").read_text(encoding="utf-8"))
+    same, cross = probe.get("same_teacher", {}), probe.get("cross_teacher", {})
+    by_group = probe.get("by_group", {})
+    if not by_group:
+        raise SystemExit("embed_probe.json chưa có phần by_group. Chạy: a5_embed --probe --reuse")
+    series = [("trung vị", BLUE, [round(same.get("median", 0), 3), round(cross.get("median", 0), 3)]
+               + [round(by_group[g]["median"], 3) for g in GROUPS if g in by_group])]
+    groups = ["Cùng mô hình dạy", "Khác mô hình dạy"] + [GROUP_LABELS[GROUPS.index(g)] for g in GROUPS
+                                                          if g in by_group]
+    vmax = max(series[0][2]) * 1.25
+    return grouped_bars("Khoảng cách biểu diễn trung vị giữa hai chuỗi của cùng một câu hỏi",
+                        groups, series, vmax, unit="")
+
+
+# ================================================================ Hình B-1: ma trận tương quan
+def build_correlation(cfg, workdir: str, fit_file: str) -> str:
+    from src.tools.compare_fit import SIGNALS, signal_matrix
+    wd = resolve_path(cfg, workdir)
+    rows = read_jsonl(wd / fit_file)
+    if not rows:
+        raise SystemExit(f"Không đọc được {wd / fit_file}. Chạy b1_fit trước.")
+    names = [n for n in SIGNALS if n in rows[0]]
+    m = signal_matrix(rows, names)
+    show = {"rsr": "RSR", "grape": "GRAPE", "local_nat": "LocalNat", "lark": "LARK", "n_tokens": "Độ dài"}
+
+    cell, pad = 190, 230
+    s = Svg(pad + cell * len(names) + 60, pad + cell * len(names) + 140)
+    s.text(60, 70, f"Tương quan hạng trong từng câu hỏi, {len(rows):,} chuỗi".replace(",", "."),
+           size=34, color=DIM)
+    s.text(60, 118, "mọi tín hiệu đã đưa về hướng càng cao càng phù hợp, RSR đã đảo dấu", size=28, color=GREY)
+    for j, y in enumerate(names):
+        s.text(pad + cell * j + cell / 2, pad - 24, show[y], size=30, color=DIM, anchor="middle")
+        s.text(pad - 24, pad + cell * j + cell / 2 + 10, show[y], size=30, color=DIM, anchor="end")
+    for i, x in enumerate(names):
+        for j, y in enumerate(names):
+            v = 1.0 if x == y else (m.get((x, y)) or m.get((y, x)) or 0.0)
+            # đậm theo độ lớn, xanh cho cùng chiều và cam cho ngược chiều
+            t = min(abs(v), 1.0)
+            base = (59, 138, 224) if v >= 0 else (201, 86, 27)
+            mix = tuple(round(255 - (255 - c) * t) for c in base)
+            fill = "#%02x%02x%02x" % mix
+            s.add(f'<rect x="{pad + cell * j}" y="{pad + cell * i}" width="{cell - 10}" height="{cell - 10}" '
+                  f'fill="{fill}" rx="6"/>')
+            s.text(pad + cell * j + (cell - 10) / 2, pad + cell * i + cell / 2 + 10,
+                   f"{v:+.2f}".replace(".", ","), size=32, anchor="middle",
+                   color="#ffffff" if t > 0.55 else INK)
+    return s.render()
+
+
 # ================================================================ Hình 3: ví dụ chọn lọc
 def build_selection(*_args, **_kw) -> str:
     raise SystemExit(
@@ -282,20 +493,35 @@ FIGURES = {
     "distribution": ("fig2_distribution", lambda a, cfg: build_distribution(
         json.loads(resolve_path(cfg, a.stats).read_text(encoding="utf-8")))),
     "selection": ("fig3_selection", lambda a, cfg: build_selection()),
+    # Hình cho báo cáo đồ án, đọc thẳng từ dữ liệu thật nên vẽ lại được khi dữ liệu đổi (Notion mục T4)
+    "teachers": ("figA2_teachers", lambda a, cfg: build_teachers(cfg, a.workdir)),
+    "truncation": ("figA3_truncation", lambda a, cfg: build_truncation(cfg, a.workdir)),
+    "lengths": ("figA4_lengths", lambda a, cfg: build_lengths(cfg, a.workdir)),
+    "judge": ("figA6_judge", lambda a, cfg: build_judge(cfg, a.workdir)),
+    "distance": ("figA8_distance", lambda a, cfg: build_distance(cfg, a.workdir)),
+    "correlation": ("figB1_correlation", lambda a, cfg: build_correlation(cfg, a.workdir, a.fit)),
 }
+REPORT = ["teachers", "truncation", "lengths", "judge", "distance", "correlation"]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("figure", choices=list(FIGURES) + ["all"])
+    ap.add_argument("figure", choices=list(FIGURES) + ["all", "report"])
     ap.add_argument("--outdir", default="docs/figures")
     ap.add_argument("--stats", default="data/pilot/run2_boxed/stats.json",
                     help="stats.json cho Hình 2. Khi có lô thật thì đổi sang data/stage_a/stats.json")
+    ap.add_argument("--workdir", default="data/stage_a", help="thư mục dữ liệu cho các hình báo cáo")
+    ap.add_argument("--fit", default="fit.qwen1_5b_base.jsonl", help="file điểm b1 cho hình tương quan")
     args = ap.parse_args(argv)
 
     cfg = load_config()
     outdir = resolve_path(cfg, args.outdir)
-    names = ["pipeline", "distribution"] if args.figure == "all" else [args.figure]
+    if args.figure == "all":
+        names = ["pipeline", "distribution"]
+    elif args.figure == "report":
+        names = REPORT
+    else:
+        names = [args.figure]
     for key in names:
         fname, build = FIGURES[key]
         root = resolve_path(cfg, ".").resolve()
