@@ -1,0 +1,11 @@
+# Mô hình học chính. Quy mô 1,5 tỷ là nơi chất lượng dữ liệu ảnh hưởng mạnh nhất (Li 2025), và là quy mô
+# mà LARK đã công bố số liệu cho RSR, GRAPE và Local Naturalness, nên đối chiếu được.
+student:
+  key: qwen1_5b
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  base_model_id: Qwen/Qwen2.5-1.5B        # dùng khi chạy với cờ --base
+  params_b: 1.5
+
+training:
+  batch_size: 4                # đo được 5,06GB ở chuỗi dài nhất 3.072; lô 8 chạm 8,83GB và tụt tốc độ
+  grad_accum: 4                # lô hiệu dụng 16, giữ giống mô hình 7 tỷ để so được hai quy mô

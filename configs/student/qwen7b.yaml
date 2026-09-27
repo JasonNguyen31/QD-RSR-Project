@@ -1,0 +1,14 @@
+# Mô hình học phụ, kiểm chứng hiệu ứng có giữ được khi tăng quy mô hay không.
+student:
+  key: qwen7b
+  model_id: Qwen/Qwen2.5-7B-Instruct
+  base_model_id: Qwen/Qwen2.5-7B
+  params_b: 7
+
+training:
+  batch_size: 2                # đo được 9,87GB; lô 1 chỉ 95 token/giây còn lô 2 đạt 180, nhanh gấp đôi
+  grad_accum: 8                # lô hiệu dụng 16, bằng mô hình 1,5 tỷ
+
+# b1 nạp mô hình ở 16-bit. Mô hình 7 tỷ ở 16-bit chiếm khoảng 15GB nên KHÔNG vừa card 12GB:
+# chạy b1 cho mô hình này phải thêm cờ --load-4bit, và ghi vào phần Hạn chế rằng thứ hạng token
+# của riêng mô hình 7 tỷ được tính trên trọng số đã lượng tử.
