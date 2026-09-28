@@ -20,7 +20,12 @@ data:
     - {source: math,  level: 5,    n: 600}   # pilot đo 53,7% đúng
     - {source: math,  level: 3,    n: 400}   # đệm, giữ dải độ khó liên tục
     - {source: gsm8k, level: null, n: 200}   # đối chứng bão hoà, dùng để phân tích
-  val: {gsm8k: 100, math: 100}               # tập kiểm định tinh chỉnh lambda
+  val: {gsm8k: 100, math: 100}               # tập kiểm định CŨ do a1 tách: 50% GSM8K, có MATH mức 1-2. Giữ nguyên
+                                             # vì tập huấn luyện được rút sau bước tách này; KHÔNG dùng để chọn lambda
+  val_matched:                               # tập kiểm định dùng để chọn lambda (thêm 28/09/2026, make_validation)
+    n: 200                                   # chia tầng đúng tỷ lệ train_composition: 20 GSM8K, 40 L3, 80 L4, 60 L5
+    seed_offset: 2000                        # seed = project.data_seed + seed_offset
+    file: validation_matched.jsonl           # ghi vào data/raw/
   pilot: {n: 100, seed: 42}
   min_correct_per_question: 3                # cố định theo k=3, giữ nguyên cho cả cấu hình k=1
   exclude_benchmarks: [math500]              # loại trùng, đã kiểm chứng 500/500 trên test và 0/7500 trên train
