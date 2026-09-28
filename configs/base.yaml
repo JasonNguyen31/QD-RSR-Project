@@ -28,18 +28,19 @@ generation:
                                 # vai trò user, không có system prompt. Nội dung ở src/common/prompts.py.
                                 # "boxed" là cách cũ, chỉ dùng để sinh bù cho lô pilot đã chạy trước 19/09.
   samples_per_teacher: 3
-  temperature: 0.8              # [TẠM] thiết kế hiện tại. Bài gốc (A.2) dùng tham số khuyến nghị của TỪNG mô hình,
-                                # với họ Qwen là temperature 0.6, top_p 0.95, top_k 20, min_p 0.
-                                # Chốt sau khi đo khoảng cách giữa các chuỗi ở hai mức (xem a5_embed).
+  temperature: 0.8              # ĐÃ CHỐT. Bài gốc (A.2) dùng 0.6 với 11 teacher; nhóm chỉ có 3 teacher nên cần thêm
+                                # đa dạng trong từng teacher. Đo trên toàn kho: khoảng cách trung vị giữa hai chuỗi
+                                # cùng teacher 0.308, khác teacher 0.465 (a5_embed --probe).
   top_p: 0.95
-  max_tokens: 2048              # bằng độ dài tối đa lúc huấn luyện. Chuỗi bị cắt (finish_reason=length) bị loại ở a3
+  max_tokens: 3072              # ĐÃ CHỐT ở lô thử 4, bằng training.max_seq_len. Lô chạy thật đã dùng giá trị này
+                                # (generation_runs.jsonl). Chuỗi bị cắt (finish_reason=length) bị loại ở a3
   max_workers: 3                # 8 luồng bị chặn tần suất trên bài MATH khó (Notion mục R5)
   max_attempts: 6               # số lần thử tối đa mỗi lượt gọi (BadRequest chỉ thử 2 lần)
   request_timeout_s: 180
 
 # ---------------------------------------------------------------- Chất lượng Qual(t)
 quality:
-  alpha: 0.5                    # Qual = alpha * rule + (1 - alpha) * llm
+  alpha: 0.5                    # Qual = alpha * rule_norm + (1 - alpha) * llm_norm, mỗi nửa min-max trong từng câu hỏi
   # Trọng số theo bài RSR (Phụ lục B.2) và Notion mục B5/L5.
   # LƯU Ý: mục 6.8 trên trang DỰ ÁN CNTT còn ghi "bằng nhau, mỗi giá trị 0,25", mâu thuẫn với bảng ở mục 6.6.
   rule_weights:
@@ -85,10 +86,12 @@ training:
   lr_scheduler: cosine
   warmup_ratio: 0.03
   num_epochs: 3
-  max_seq_len: 2048
-  # [TẠM] chốt sau B8 khi đo mức chiếm bộ nhớ thực tế
-  per_device_batch_size: 2
-  gradient_accumulation_steps: 8
+  max_seq_len: 3072             # ĐÃ CHỐT, bằng generation.max_tokens. b1_fit cũng đọc giá trị này làm độ dài tối đa
+                                # khi chấm tín hiệu: bản chạy b1 cũ dùng 2048 nên 383 chuỗi dài bị chấm trên đoạn đầu.
+  # Kích thước lô đo bằng check_vram, ghi đè trong configs/student/*.yaml (batch_size, grad_accum).
+  # Lô hiệu dụng 16 cho cả hai mô hình học. b3_train phải đọc đúng hai khoá batch_size và grad_accum.
+  batch_size: 2
+  grad_accum: 8
   gradient_checkpointing: true
   bf16: true
 
