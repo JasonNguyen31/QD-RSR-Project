@@ -58,8 +58,17 @@ selection:
   k: 3                          # cấu hình chính. Cấu hình phụ k=1 dùng --override selection.k=1
   a: 1.0                        # số mũ của Fit. a=0 tắt Fit (ablation)
   b: 1.0                        # số mũ của Qual. b=0 tắt Qual (ablation)
-  lambda_div: 0.5               # [TẠM] chốt bằng lưới bên dưới trên tập kiểm định 200 câu, sau khi B9 xong
-  lambda_grid: [0.0, 0.25, 0.5, 1.0]
+  lambda_div: 0.4               # [TẠM] giá trị giữa lưới; λ thật chọn bằng huấn luyện trên validation_matched.jsonl
+  # Lưới chốt 29/09 bằng lambda_scan trên file fit .v1 (RSR không đổi định nghĩa), 1.776 câu có hơn 3 ứng viên.
+  # Chênh lệch trung vị giữa tập tốt nhất và kém nhất trong một câu: Σ Fit·Qual 1,43, Div thô 0,76, nên hai vế
+  # cùng cỡ. Tỷ lệ câu đổi tập so với λ = 0: 0,15 → 15%; 0,4 → 31%; 1,0 → 59% (ở 1,0 chỉ 10% câu trùng tập Div
+  # lớn nhất). λ = 0 trùng biến thể Fit + Quality, dùng lại mô hình đó nên chọn λ chỉ tốn 3 lần huấn luyện.
+  # Chạy lại lambda_scan với file fit mới để xác nhận.
+  lambda_grid: [0.0, 0.15, 0.4, 1.0]
+  # Div giữ nguyên (tổng khoảng cách, không min-max trong câu hỏi), đúng công thức Div(S) trong paper.
+  # Min-max sẽ phóng chênh lệch rất nhỏ ở những câu mà mọi chuỗi gần giống nhau thành 0 đến 1, khiến Div đổi
+  # tập vì nhiễu biểu diễn. Fit và Qual vẫn min-max trong câu hỏi (normalize bên dưới).
+  div_scale: raw
   rsr_rank_cap: 100             # r_max của bài gốc
   normalize: minmax_per_question
 
