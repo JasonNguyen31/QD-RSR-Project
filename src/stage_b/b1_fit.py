@@ -164,15 +164,19 @@ def token_stats(model, ids, n_prompt: int, chunk: int = 512) -> dict:
 
 
 def local_naturalness(model, p_ids: Sequence[int], r_ids: Sequence[int], steps, k: int,
-                      batch: int = 8) -> float:
+                      batch: int = 32, head_chunk: int = 512) -> float:
     """Local Naturalness đúng phương trình 2 của Just 2025.
 
     Mỗi câu thành một mục: [đề bài] + [tối đa k câu liền trước] + [câu đang chấm]; chỉ token của câu đang
     chấm được tính. Điểm câu là log xác suất trung bình của nó; điểm chuỗi là trung bình theo câu.
 
-    Chạy theo lô, đệm bên phải: với đệm phải, vị trí của các token thật vẫn là 0, 1, 2... như khi chạy
-    riêng từng mục, nên kết quả khớp cách chạy từng mục (kiểm chứng trong --selftest). Chỉ tính lớp đầu ra
-    trên các vị trí cần chấm, vì ma trận logit cho cả lô với 152.000 mục từ vựng quá lớn.
+    Cách chạy cho nhanh (29/09, bản đầu mất 1,6 giây mỗi chuỗi):
+      - lô 32 mục, nên phần lớn chuỗi chỉ cần một lượt forward cho mọi câu;
+      - dựng tensor trên CPU rồi chuyển sang GPU một lần, không tạo tensor GPU cho từng mục;
+      - chỉ tính lớp đầu ra trên các vị trí cần chấm, gom theo đoạn head_chunk vị trí, cộng dồn vào từng
+        mục bằng index_add_, và chỉ đồng bộ về CPU một lần ở cuối.
+    Đệm bên phải, nên vị trí của token thật vẫn là 0, 1, 2... như khi chạy riêng từng mục. Kết quả phải khớp
+    local_naturalness_naive (kiểm chứng trong --selftest).
     """
     import torch
 
@@ -181,28 +185,41 @@ def local_naturalness(model, p_ids: Sequence[int], r_ids: Sequence[int], steps, 
     if pad is None:
         pad = model.config.eos_token_id if isinstance(model.config.eos_token_id, int) else 0
     body, head = model.model, model.lm_head
-    means: list[float] = []
+    dev = head.weight.device
+    sums = torch.zeros(len(items), device=dev, dtype=torch.float32)
+    counts = torch.zeros(len(items), device=dev, dtype=torch.float32)
+    n_prompt = len(p_ids)
     for i in range(0, len(items), batch):
         chunk = items[i:i + batch]
         seqs = [list(p_ids) + list(r_ids[c:e]) for c, s, e in chunk]
         width = max(len(x) for x in seqs)
-        ids = torch.full((len(seqs), width), pad, dtype=torch.long, device="cuda")
-        mask = torch.zeros((len(seqs), width), dtype=torch.long, device="cuda")
-        for j, x in enumerate(seqs):
-            ids[j, :len(x)] = torch.tensor(x, device="cuda")
-            mask[j, :len(x)] = 1
+        ids_cpu = torch.full((len(seqs), width), pad, dtype=torch.long)
+        mask_cpu = torch.zeros((len(seqs), width), dtype=torch.long)
+        rows, cols, owner = [], [], []
+        for j, ((c, s, e), x) in enumerate(zip(chunk, seqs)):
+            ids_cpu[j, :len(x)] = torch.tensor(x, dtype=torch.long)
+            mask_cpu[j, :len(x)] = 1
+            first = n_prompt + (s - c)               # vị trí token đầu của câu trong mục
+            rows.extend([j] * (len(x) - first))
+            cols.extend(range(first - 1, len(x) - 1))  # vị trí t dự đoán token t+1
+            owner.extend([i + j] * (len(x) - first))
+        ids, mask = ids_cpu.to(dev), mask_cpu.to(dev)
+        rows_t = torch.tensor(rows, device=dev)
+        cols_t = torch.tensor(cols, device=dev)
+        owner_t = torch.tensor(owner, device=dev)
         with torch.no_grad():
             hidden = body(input_ids=ids, attention_mask=mask).last_hidden_state
-            for j, (c, s, e) in enumerate(chunk):
-                first = len(p_ids) + (s - c)         # vị trí token đầu của câu trong mục
-                last = len(seqs[j])                  # hết mục
-                h = hidden[j, first - 1:last - 1]    # vị trí t dự đoán token t+1
-                logp = torch.log_softmax(head(h).float(), dim=-1)
-                tgt = ids[j, first:last]
-                means.append(float(logp.gather(-1, tgt.unsqueeze(-1)).mean()))
-                del h, logp
-        del hidden, ids, mask
-    return mean_over_steps(means)
+            h = hidden[rows_t, cols_t]               # (số token cần chấm, chiều ẩn)
+            tgt = ids[rows_t, cols_t + 1]
+            del hidden
+            for a in range(0, h.shape[0], head_chunk):
+                lg = head(h[a:a + head_chunk]).float()
+                lp = lg.gather(-1, tgt[a:a + head_chunk].unsqueeze(-1)).squeeze(-1) - torch.logsumexp(lg, dim=-1)
+                sums.index_add_(0, owner_t[a:a + head_chunk], lp)
+                del lg, lp
+            counts.index_add_(0, owner_t, torch.ones_like(owner_t, dtype=torch.float32))
+        del h, tgt, ids, mask
+    return mean_over_steps((sums / counts).tolist())
 
 
 def local_naturalness_naive(model, p_ids: Sequence[int], r_ids: Sequence[int], steps, k: int) -> float:
