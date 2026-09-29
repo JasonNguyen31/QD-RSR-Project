@@ -84,7 +84,12 @@ def _stage_a(tmp_path):
     write_json(wd / "embed_probe.json", {
         "within_teacher": {"median": 0.308}, "across_teacher": {"median": 0.465},
         "by_group": {"gsm8k": {"median": 0.348}, "math-L5": {"median": 0.460}}})
+    # Đúng tên khoá b1_fit ghi từ 29/09: brier và mean_surprisal, không có lark (ĝ tính theo câu hỏi).
     write_jsonl(wd / "fit.test.jsonl", [
+        {"tid": f"math_1|deepseek|{i}", "qid": "math_1", "rsr": 5.0 + i, "grape": -1.0 - i,
+         "local_nat": -1.1 - i, "brier": 0.3 + 0.05 * i, "mean_surprisal": 1.0 + i, "n_tokens": 100 + i,
+         "n_steps": 5, "signals_version": 2} for i in range(4)])
+    write_jsonl(wd / "fit.v1.jsonl", [
         {"tid": f"math_1|deepseek|{i}", "rsr": 5.0 + i, "grape": -1.0 - i, "local_nat": -1.1 - i,
          "lark": 0.1 * i, "n_tokens": 100 + i} for i in range(4)])
     return wd
@@ -111,7 +116,15 @@ def test_correlation_figure_renders(tmp_path):
     from src.tools import make_figures as mf
 
     svg = mf.build_correlation(load_config(), str(_stage_a(tmp_path)), "fit.test.jsonl")
-    assert "Tương quan hạng" in svg and "RSR" in svg
+    assert "Tương quan hạng" in svg and "RSR" in svg and "LARK" in svg and "LocalNat" in svg
+
+
+def test_correlation_figure_refuses_a_file_with_old_signal_definitions(tmp_path):
+    from src.common.config import load_config
+    from src.tools import make_figures as mf
+
+    with pytest.raises(SystemExit):
+        mf.build_correlation(load_config(), str(_stage_a(tmp_path)), "fit.v1.jsonl")
 
 
 def test_truncation_figure_shows_the_teacher_that_was_cut(tmp_path):

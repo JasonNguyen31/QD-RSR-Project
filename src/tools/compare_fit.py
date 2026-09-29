@@ -23,6 +23,7 @@ from typing import Mapping, Sequence
 
 from src.common.config import load_config, resolve_path
 from src.common.io_utils import read_jsonl, split_tid
+from src.stage_b.signals import prepare_fit_rows
 from src.tools.compare_judges import pair_agreement, spearman, top1_agreement
 
 # Tên tín hiệu và hướng: True nghĩa là càng cao càng phù hợp với mô hình học.
@@ -83,9 +84,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     cfg = load_config()
     wd = resolve_path(cfg, args.workdir)
-    a = read_jsonl(wd / args.file_a)
+    a, stale_a = prepare_fit_rows(read_jsonl(wd / args.file_a))
     if not a:
         raise SystemExit(f"Không đọc được {wd / args.file_a}")
+    if stale_a:
+        print(f"[chú ý] {args.file_a} tạo trước 29/09: bỏ {', '.join(stale_a)} vì định nghĩa cũ sai. "
+              f"Chạy lại b1_fit để có đủ bốn tín hiệu.\n")
 
     if args.matrix or not args.file_b:
         names = [n for n in SIGNALS if n in a[0]]
@@ -108,9 +112,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not args.file_b:
             return 0
 
-    b = read_jsonl(wd / args.file_b)
+    b, _stale_b = prepare_fit_rows(read_jsonl(wd / args.file_b))
     if not b:
         raise SystemExit(f"Không đọc được {wd / args.file_b}")
+    if args.signal not in a[0] or args.signal not in b[0]:
+        raise SystemExit(f"Một trong hai file không có tín hiệu {args.signal} theo định nghĩa hiện hành.")
     r = compare_two(a, b, args.signal)
     ma_name = a[0].get("model", args.file_a)
     mb_name = b[0].get("model", args.file_b)

@@ -455,11 +455,15 @@ def build_distance(cfg, workdir: str) -> str:
 
 # ================================================================ Hình B-1: ma trận tương quan
 def build_correlation(cfg, workdir: str, fit_file: str) -> str:
+    from src.stage_b.signals import prepare_fit_rows
     from src.tools.compare_fit import SIGNALS, signal_matrix
     wd = resolve_path(cfg, workdir)
-    rows = read_jsonl(wd / fit_file)
+    rows, stale = prepare_fit_rows(read_jsonl(wd / fit_file))
     if not rows:
         raise SystemExit(f"Không đọc được {wd / fit_file}. Chạy b1_fit trước.")
+    if stale:
+        raise SystemExit(f"{fit_file} tạo trước 29/09, LARK và LocalNat mang định nghĩa cũ. "
+                         f"Chạy lại b1_fit rồi mới vẽ Hình B-1.")
     names = [n for n in SIGNALS if n in rows[0]]
     m = signal_matrix(rows, names)
     show = {"rsr": "RSR", "grape": "GRAPE", "local_nat": "LocalNat", "lark": "LARK", "n_tokens": "Độ dài"}

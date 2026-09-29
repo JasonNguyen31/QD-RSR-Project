@@ -8,14 +8,19 @@
 Đọc  <workdir>/candidates.jsonl và questions.jsonl
 Ghi  <workdir>/fit.<student>.jsonl   một dòng mỗi chuỗi, ghi dần nên chạy bù được
 
-Bốn tín hiệu, tính trong CÙNG MỘT lượt forward vì cả bốn đều đọc từ một bộ logits:
+Bốn tín hiệu (đối chiếu bài gốc ngày 29/09/2026, xem src/stage_b/signals.py):
 
-    RSR        tỷ lệ tổng thứ hạng token đã cắt ngưỡng trên tổng độ bất ngờ      CỰC TIỂU
-    GRAPE      log xác suất trung bình của chuỗi                                 cực đại
-    LocalNat   như GRAPE nhưng chỉ cho mô hình thấy W token ngữ cảnh gần nhất     cực đại
-    LARK       điểm Brier trung bình, đo mức mô hình còn chưa chắc chắn          cực đại
+    RSR        tổng thứ hạng token đã cắt ngưỡng chia tổng độ bất ngờ (Yang 2026)        CỰC TIỂU
+    GRAPE      log xác suất trung bình từng token của cả chuỗi (Zhang 2025; cách hiểu    cực đại
+               của Just 2025 phương trình 1 và LARK phụ lục C.2)
+    LocalNat   trung bình theo CÂU của log xác suất từng câu, khi mô hình chỉ thấy đề     cực đại
+               bài và tối đa k = 4 câu liền trước (Just 2025 phương trình 2)
+    LARK       ĝ = ℓ/Σℓ · (2ρ̂ − Σρ̂ℓ/Σℓ), ρ̂ = Brier/ℓ, tổng trên ứng viên cùng câu hỏi     cực đại
+               (Yu 2026 phương trình 7). b1 chỉ ghi Brier và ℓ; ĝ tính theo nhóm ở
+               signals.add_lark, vì nó cần đủ các ứng viên của câu hỏi.
 
-CHỈ RSR LÀ CỰC TIỂU. Đây là chỗ dễ cài nhầm nhất trong cả dự án.
+RSR, GRAPE và phần của LARK đọc từ CÙNG MỘT lượt forward. LocalNat cần các lượt riêng, mỗi câu một mục,
+chạy theo lô. CHỈ RSR LÀ CỰC TIỂU. Đây là chỗ dễ cài nhầm nhất trong cả dự án.
 
 Chuỗi được chấm ở đúng định dạng huấn luyện: system prompt huấn luyện, câu hỏi ở vai người dùng, chuỗi
 suy luận ở vai trợ lý. Chỉ các token của chuỗi suy luận được tính điểm, phần câu hỏi thì không.
@@ -34,6 +39,7 @@ from typing import Mapping, Sequence
 from src.common.config import load_config, resolve_path
 from src.common.io_utils import JsonlWriter, load_done_keys, now_iso, read_jsonl
 from src.common.prompts import SYSTEM_PROMPT_TRAIN
+from src.stage_b.signals import SIGNALS_VERSION, local_items, mean_over_steps, token_steps
 
 try:
     from tqdm import tqdm
@@ -70,7 +76,7 @@ def aggregate(ranks: Sequence[int], surprisals: Sequence[float], sum_sq: Sequenc
     return {
         "rsr": rsr,
         "grape": -total_surprisal / n,                    # log xác suất trung bình
-        "lark": sum(brier) / n,
+        "brier": sum(brier) / n,                          # Brier_k của LARK; ĝ tính theo nhóm ở signals.add_lark
         "mean_rank": sum(ranks) / n,
         "mean_clipped_rank": clipped / n,
         "mean_surprisal": total_surprisal / n,
@@ -107,6 +113,8 @@ def build_inputs(tok, question: str, trajectory: str, max_len: int) -> tuple:
 
     Chấm ở định dạng huấn luyện là quan trọng: Fit phải đo mức phù hợp trong đúng hoàn cảnh mà mô hình
     học sẽ gặp khi tinh chỉnh, không phải ở một định dạng khác.
+
+    Trả về (ids trên GPU, số token phần đề, ids phần đề, ids phần chuỗi đã cắt, các bước theo câu).
     """
     import torch
 
@@ -114,13 +122,15 @@ def build_inputs(tok, question: str, trajectory: str, max_len: int) -> tuple:
                 {"role": "user", "content": question}]
     prompt = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     p_ids = tok(prompt, add_special_tokens=False)["input_ids"]
-    r_ids = tok(trajectory, add_special_tokens=False)["input_ids"]
+    enc = tok(trajectory, add_special_tokens=False, return_offsets_mapping=True)
+    r_ids, offsets = enc["input_ids"], enc["offset_mapping"]
 
-    ids = (p_ids + r_ids)[:max_len]
-    n_prompt = min(len(p_ids), len(ids))
-    if len(ids) - n_prompt < 2:                      # không còn token nào của chuỗi để chấm
-        return None, 0
-    return torch.tensor([ids], device="cuda"), n_prompt
+    keep = max(0, min(len(r_ids), max_len - len(p_ids)))
+    r_ids, offsets = r_ids[:keep], offsets[:keep]
+    if len(r_ids) < 2:                               # không còn token nào của chuỗi để chấm
+        return None, 0, None, None, None
+    steps = token_steps(offsets, trajectory)
+    return torch.tensor([p_ids + r_ids], device="cuda"), len(p_ids), p_ids, r_ids, steps
 
 
 def token_stats(model, ids, n_prompt: int, chunk: int = 512) -> dict:
@@ -153,40 +163,73 @@ def token_stats(model, ids, n_prompt: int, chunk: int = 512) -> dict:
     return {"ranks": ranks, "surprisals": surprisals, "sum_sq": sum_sq, "target_probs": tprobs}
 
 
-def local_naturalness(model, ids, n_prompt: int, window: int) -> float:
-    """Log xác suất trung bình khi mô hình CHỈ thấy `window` token gần nhất.
+def local_naturalness(model, p_ids: Sequence[int], r_ids: Sequence[int], steps, k: int,
+                      batch: int = 8) -> float:
+    """Local Naturalness đúng phương trình 2 của Just 2025.
 
-    Ý tưởng của Local Naturalness: một chuỗi có thể có xác suất toàn cục thấp chỉ vì nó dài, trong khi
-    từng bước vẫn tự nhiên. Đo trong ngữ cảnh cục bộ tách được hai điều đó.
-    Cài đặt: cắt chuỗi thành các cửa sổ không chồng nhau, mỗi cửa sổ tự làm ngữ cảnh cho chính nó.
+    Mỗi câu thành một mục: [đề bài] + [tối đa k câu liền trước] + [câu đang chấm]; chỉ token của câu đang
+    chấm được tính. Điểm câu là log xác suất trung bình của nó; điểm chuỗi là trung bình theo câu.
+
+    Chạy theo lô, đệm bên phải: với đệm phải, vị trí của các token thật vẫn là 0, 1, 2... như khi chạy
+    riêng từng mục, nên kết quả khớp cách chạy từng mục (kiểm chứng trong --selftest). Chỉ tính lớp đầu ra
+    trên các vị trí cần chấm, vì ma trận logit cho cả lô với 152.000 mục từ vựng quá lớn.
     """
     import torch
 
-    total, n = 0.0, 0
-    start, end = max(n_prompt - 1, 0), ids.shape[1] - 1
-    for a in range(start, end, window):
-        b = min(a + window, end)
-        piece = ids[:, a:b + 1]
-        if piece.shape[1] < 2:
-            continue
+    items = local_items(steps, k)
+    pad = model.config.pad_token_id
+    if pad is None:
+        pad = model.config.eos_token_id if isinstance(model.config.eos_token_id, int) else 0
+    body, head = model.model, model.lm_head
+    means: list[float] = []
+    for i in range(0, len(items), batch):
+        chunk = items[i:i + batch]
+        seqs = [list(p_ids) + list(r_ids[c:e]) for c, s, e in chunk]
+        width = max(len(x) for x in seqs)
+        ids = torch.full((len(seqs), width), pad, dtype=torch.long, device="cuda")
+        mask = torch.zeros((len(seqs), width), dtype=torch.long, device="cuda")
+        for j, x in enumerate(seqs):
+            ids[j, :len(x)] = torch.tensor(x, device="cuda")
+            mask[j, :len(x)] = 1
         with torch.no_grad():
-            lg = model(piece).logits[0, :-1].float()
-        tgt = piece[0, 1:]
-        lp = torch.log_softmax(lg, dim=-1).gather(-1, tgt.unsqueeze(-1)).squeeze(-1)
-        total += float(lp.sum())
-        n += int(tgt.numel())
-        del lg, lp
-    return total / max(n, 1)
+            hidden = body(input_ids=ids, attention_mask=mask).last_hidden_state
+            for j, (c, s, e) in enumerate(chunk):
+                first = len(p_ids) + (s - c)         # vị trí token đầu của câu trong mục
+                last = len(seqs[j])                  # hết mục
+                h = hidden[j, first - 1:last - 1]    # vị trí t dự đoán token t+1
+                logp = torch.log_softmax(head(h).float(), dim=-1)
+                tgt = ids[j, first:last]
+                means.append(float(logp.gather(-1, tgt.unsqueeze(-1)).mean()))
+                del h, logp
+        del hidden, ids, mask
+    return mean_over_steps(means)
+
+
+def local_naturalness_naive(model, p_ids: Sequence[int], r_ids: Sequence[int], steps, k: int) -> float:
+    """Cùng đại lượng, chạy riêng từng câu bằng lượt forward đầy đủ. Chỉ dùng trong --selftest để đối chiếu."""
+    import torch
+
+    means = []
+    for c, s, e in local_items(steps, k):
+        x = torch.tensor([list(p_ids) + list(r_ids[c:e])], device="cuda")
+        first = len(p_ids) + (s - c)
+        with torch.no_grad():
+            lg = model(x).logits[0, first - 1:x.shape[1] - 1].float()
+        lp = torch.log_softmax(lg, dim=-1).gather(-1, x[0, first:].unsqueeze(-1))
+        means.append(float(lp.mean()))
+    return mean_over_steps(means)
 
 
 def score_one(model, tok, question: str, trajectory: str, max_len: int, rank_clip: int,
-              window: int, chunk: int) -> dict | None:
-    ids, n_prompt = build_inputs(tok, question, trajectory, max_len)
+              local_k: int, chunk: int) -> dict | None:
+    ids, n_prompt, p_ids, r_ids, steps = build_inputs(tok, question, trajectory, max_len)
     if ids is None:
         return None
     stats = token_stats(model, ids, n_prompt, chunk)
     out = aggregate(stats["ranks"], stats["surprisals"], stats["sum_sq"], stats["target_probs"], rank_clip)
-    out["local_nat"] = local_naturalness(model, ids, n_prompt, window)
+    out["local_nat"] = local_naturalness(model, p_ids, r_ids, steps, local_k)
+    out["n_steps"] = len(steps)
+    out["signals_version"] = SIGNALS_VERSION
     return out
 
 
@@ -197,23 +240,37 @@ SELFTEST_TEXTS = {
     "xáo trộn": "Paris largest cities the is of France one capital Europe in It the is.",
     "lời giải đúng": "We need 3 times 4. Since 3 times 4 equals 12, the answer is 12.",
     "lời giải sai": "We need 3 times 4. Since 3 times 4 equals 47, the answer is 47.",
+    "một câu": "The answer is 12 because 3 times 4 equals 12",
+    "nhiều câu": ("Let x be the number of apples. Tom has 3 more apples than Ann. Ann has 5 apples. "
+                  "So Tom has 5 + 3 = 8 apples.\n\nTogether they have 5 + 8 = 13 apples. "
+                  "We check: 13 - 5 = 8, which matches. Therefore the answer is \\boxed{13}."),
 }
 
 
-def selftest(model, tok, rank_clip: int, window: int, chunk: int) -> int:
+def selftest(model, tok, rank_clip: int, local_k: int, chunk: int) -> int:
     """Chạy bốn phép kiểm chứng trên văn bản có tính chất biết trước.
 
     Đây là câu trả lời cho câu hỏi "dựa vào đâu mà tin cài đặt RSR đúng". Không phép nào cần dữ liệu thật.
     """
     q = "Answer the question."
-    r = {name: score_one(model, tok, q, text, 2048, rank_clip, window, chunk)
+    r = {name: score_one(model, tok, q, text, 3072, rank_clip, local_k, chunk)
          for name, text in SELFTEST_TEXTS.items()}
 
     print(f"\n{'văn bản':<16}{'RSR':>10}{'thứ hạng TB':>14}{'bất ngờ TB':>13}{'GRAPE':>10}"
-          f"{'LocalNat':>11}{'LARK':>9}")
+          f"{'LocalNat':>11}{'Brier':>9}{'số câu':>8}")
     for name, v in r.items():
         print(f"{name:<16}{v['rsr']:>10.2f}{v['mean_rank']:>14.1f}{v['mean_surprisal']:>13.3f}"
-              f"{v['grape']:>10.3f}{v['local_nat']:>11.3f}{v['lark']:>9.3f}")
+              f"{v['grape']:>10.3f}{v['local_nat']:>11.3f}{v['brier']:>9.3f}{v['n_steps']:>8}")
+
+    # Đối chiếu LocalNat chạy theo lô với cách chạy từng câu, trên chuỗi nhiều câu.
+    long_text = SELFTEST_TEXTS["nhiều câu"]
+    _ids, _n, p_ids, r_ids, steps = build_inputs(tok, q, long_text, 3072)
+    batched = local_naturalness(model, p_ids, r_ids, steps, local_k)
+    naive = local_naturalness_naive(model, p_ids, r_ids, steps, local_k)
+    # Một câu duy nhất: ngữ cảnh chỉ có đề bài, nên LocalNat phải bằng GRAPE.
+    one = score_one(model, tok, q, SELFTEST_TEXTS["một câu"], 3072, rank_clip, local_k, chunk)
+    print(f"\nLocalNat theo lô {batched:.4f}, từng câu {naive:.4f}, {len(steps)} câu")
+    print(f"Chuỗi một câu: LocalNat {one['local_nat']:.4f}, GRAPE {one['grape']:.4f}")
 
     checks = [
         ("văn bản xáo trộn có thứ hạng token cao hơn văn bản tự nhiên",
@@ -227,8 +284,13 @@ def selftest(model, tok, rank_clip: int, window: int, chunk: int) -> int:
         ("chuỗi lặp vô nghĩa dễ đoán nên thứ hạng thấp",
          r["lặp vô nghĩa"]["mean_rank"] < r["xáo trộn"]["mean_rank"]),
         ("chấm lại cùng một chuỗi cho kết quả giống hệt",
-         abs(score_one(model, tok, q, SELFTEST_TEXTS["tự nhiên"], 2048, rank_clip, window, chunk)["rsr"]
+         abs(score_one(model, tok, q, SELFTEST_TEXTS["tự nhiên"], 3072, rank_clip, local_k, chunk)["rsr"]
              - r["tự nhiên"]["rsr"]) < 1e-6),
+        ("LocalNat chạy theo lô khớp cách chạy từng câu (lệch dưới 0,02)",
+         abs(batched - naive) < 0.02),
+        ("chuỗi một câu: LocalNat bằng GRAPE (lệch dưới 0,02)",
+         one["n_steps"] == 1 and abs(one["local_nat"] - one["grape"]) < 0.02),
+        ("chuỗi nhiều câu được cắt thành nhiều bước", len(steps) >= 6),
     ]
     print()
     bad = 0
@@ -260,19 +322,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     st = cfg["student"]
     model_id = st["base_model_id"] if args.base else st["model_id"]
     rank_clip = cfg["selection"]["rsr_rank_cap"]
-    window = cfg["signals"]["local_window"]
+    local_k = cfg["signals"]["local_steps"]
     max_len = cfg["training"]["max_seq_len"]
 
     import torch
     if not torch.cuda.is_available():
         raise SystemExit("Không thấy GPU. Lệnh này chạy trên máy Windows có card NVIDIA.")
     print(f"[b1] mô hình học {model_id}, {'4-bit' if args.load_4bit else '16-bit'}, "
-          f"ngưỡng cắt thứ hạng {rank_clip}, cửa sổ cục bộ {window}")
+          f"ngưỡng cắt thứ hạng {rank_clip}, LocalNat {local_k} câu liền trước, độ dài tối đa {max_len}")
     model, tok = load_student(model_id, args.load_4bit)
     print(f"[b1] nạp xong, chiếm {torch.cuda.max_memory_allocated() / 1024 ** 3:.2f} GB")
 
     if args.selftest:
-        return selftest(model, tok, rank_clip, window, args.chunk)
+        return selftest(model, tok, rank_clip, local_k, args.chunk)
 
     wd: Path = resolve_path(cfg, args.workdir)
     files = cfg["stage_a_files"]
@@ -285,6 +347,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     tag = args.student + ("_base" if args.base else "")
     path = wd / (args.out or f"fit.{tag}.jsonl")
+    if path.exists():
+        first = next(iter(read_jsonl(path)), None)
+        if first is not None and int(first.get("signals_version", 1)) < SIGNALS_VERSION:
+            raise SystemExit(
+                f"{path.name} được tạo bằng định nghĩa tín hiệu cũ (LARK là Brier, LocalNat là khối 256 token).\n"
+                f"Chạy bù lên file này sẽ bỏ qua mọi chuỗi. Đổi tên file cũ trước, ví dụ:\n"
+                f"    mv {path} {path.with_suffix('.v1.jsonl')}")
     done = load_done_keys(path, lambda r: r["tid"])
     todo = [c for c in cands if c["tid"] not in done]
     print(f"[b1] {len(cands)} chuỗi, đã có {len(done)}, cần chấm {len(todo)}")
@@ -297,7 +366,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 failed += 1
                 continue
             try:
-                v = score_one(model, tok, q["question"], c["text"], max_len, rank_clip, window, args.chunk)
+                v = score_one(model, tok, q["question"], c["text"], max_len, rank_clip, local_k, args.chunk)
             except torch.cuda.OutOfMemoryError:
                 torch.cuda.empty_cache()
                 failed += 1
@@ -316,6 +385,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"[b1] RSR trên {len(rows)} chuỗi: nhỏ nhất {rsr[0]:.2f}, trung vị {rsr[len(rsr) // 2]:.2f}, "
               f"lớn nhất {rsr[-1]:.2f}")
         print("[b1] Nhắc lại: RSR càng THẤP càng phù hợp. Ba tín hiệu còn lại càng CAO càng tốt.")
+        print("[b1] Cột brier chưa phải LARK: ĝ tính theo câu hỏi bằng signals.add_lark (compare_fit tự làm).")
     return 0
 
 

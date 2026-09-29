@@ -42,23 +42,36 @@ def test_grape_is_mean_log_probability():
     assert perplexity(r["grape"]) == pytest.approx(math.exp(0.5))
 
 
-def test_lark_brier_is_zero_for_a_perfectly_confident_correct_prediction():
+def test_brier_is_zero_for_a_perfectly_confident_correct_prediction():
     """Dự đoán chắc chắn và đúng: p_đúng = 1, tổng bình phương = 1, nên Brier = 1 - 2 + 1 = 0."""
     r = aggregate([0], [0.0], [1.0], [1.0])
-    assert r["lark"] == pytest.approx(0.0)
+    assert r["brier"] == pytest.approx(0.0)
 
 
-def test_lark_grows_when_the_model_is_unsure():
+def test_brier_grows_when_the_model_is_unsure():
     sure = aggregate([0], [0.1], [0.82], [0.9])
     unsure = aggregate([0], [1.6], [0.05], [0.2])
-    assert unsure["lark"] > sure["lark"]
+    assert unsure["brier"] > sure["brier"]
 
 
-def test_lark_in_valid_range():
+def test_brier_in_valid_range():
     """Điểm Brier của một token luôn nằm trong [0, 2] theo định nghĩa."""
     for sq, tp in [(1.0, 1.0), (0.0, 0.0), (0.5, 0.5), (0.25, 0.1)]:
-        v = aggregate([0], [0.5], [sq], [tp])["lark"]
+        v = aggregate([0], [0.5], [sq], [tp])["brier"]
         assert -1e-9 <= v <= 2 + 1e-9, (sq, tp, v)
+
+
+def test_aggregate_no_longer_writes_a_lark_field():
+    """LARK là ĝ theo câu hỏi, không tính được từ một chuỗi. Ghi Brier dưới tên lark từng làm sai tín hiệu."""
+    assert "lark" not in aggregate(*make())
+
+
+def test_brier_matches_the_formula_of_the_paper_on_a_tiny_vocabulary():
+    """‖π − δ(y)‖² tính tay trên từ vựng 3 mục, so với cách tính nhanh 1 − 2p + Σp²."""
+    pi, y = [0.6, 0.3, 0.1], 1
+    direct = sum((p - (1.0 if v == y else 0.0)) ** 2 for v, p in enumerate(pi))
+    fast = aggregate([1], [-math.log(pi[y])], [sum(p * p for p in pi)], [pi[y]])["brier"]
+    assert fast == pytest.approx(direct)
 
 
 def test_zero_surprisal_does_not_divide_by_zero():

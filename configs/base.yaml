@@ -69,7 +69,7 @@ signal_direction:
   rsr: min
   grape: max
   local_nat: max
-  lark: max
+  lark: max                     # xếp theo ĝ (tính theo câu hỏi ở signals.add_lark), không phải Brier
   token_length: max
   rule_quality: max
   llm_quality: max
@@ -108,8 +108,10 @@ eval:
   max_new_tokens: 2048          # [TẠM]
 
 signals:
-  # Cửa sổ ngữ cảnh cục bộ cho Local Naturalness: mô hình chỉ thấy ngần này token gần nhất khi chấm.
-  local_window: 256
+  # Local Naturalness (Just 2025, phương trình 2): mỗi câu được chấm khi mô hình chỉ thấy đề bài và tối đa
+  # ngần này câu liền trước. 4 là giá trị bài gốc chọn (phụ lục B.4) và LARK dùng lại (phụ lục C.2).
+  # Trước 29/09 mã dùng khối 256 token không chồng nhau, không có đề bài: sai định nghĩa, đã bỏ.
+  local_steps: 4
   # Số vị trí xếp hạng mỗi lần trong b1. Xếp hạng phải so với toàn bộ 152.000 mục từ vựng, nên làm một
   # lần cho cả chuỗi tốn gần 8GB; chia đoạn 512 đưa xuống khoảng 1GB.
   rank_chunk: 512
