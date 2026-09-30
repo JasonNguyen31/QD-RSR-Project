@@ -59,6 +59,7 @@ selection:
   a: 1.0                        # số mũ của Fit. a=0 tắt Fit (ablation)
   b: 1.0                        # số mũ của Qual. b=0 tắt Qual (ablation)
   lambda_div: 0.4               # [TẠM] giá trị giữa lưới; λ thật chọn bằng huấn luyện trên validation_matched.jsonl
+                                # (chỉ trên mô hình 1,5 tỷ; mô hình 7 tỷ dùng lại λ đó, không chọn lại)
   # Lưới chốt 29/09 bằng lambda_scan trên file fit .v1 (RSR không đổi định nghĩa), 1.776 câu có hơn 3 ứng viên.
   # Chênh lệch trung vị giữa tập tốt nhất và kém nhất trong một câu: Σ Fit·Qual 1,43, Div thô 0,76, nên hai vế
   # cùng cỡ. Tỷ lệ câu đổi tập so với λ = 0: 0,15 → 15%; 0,4 → 31%; 1,0 → 59% (ở 1,0 chỉ 10% câu trùng tập Div
@@ -70,6 +71,9 @@ selection:
   # tập vì nhiễu biểu diễn. Fit và Qual vẫn min-max trong câu hỏi (normalize bên dưới).
   div_scale: raw
   rsr_rank_cap: 100             # r_max của bài gốc
+  # Seed cho mọi bước chọn ngẫu nhiên (Correct-Only, No-Filter). Cố định và KHÔNG gắn với seed huấn luyện,
+  # để tập chọn của Correct-Only giống hệt nhau ở ba seed và ở cả hai mô hình học (chốt 30/09).
+  random_seed: 42
   normalize: minmax_per_question
 
 # Chiều tối ưu của từng tín hiệu khi chọn top-k. CHỈ RSR là min, còn lại đều là max.
@@ -109,18 +113,28 @@ hardware:
   torch_memory_fraction: 0.85
 
 # ---------------------------------------------------------------- Đánh giá (Giai đoạn C)
+# ĐÃ CHỐT 30/09 theo Phụ lục A.4 bài RSR (đối chiếu cả v1 và v5, hai bản giống nhau).
 eval:
   benchmarks: [gsm8k, math500, amc, aime24, aime25, bbh]
-  n_samples: 4                  # Acc@4: đúng nếu có ít nhất một trong 4 lượt đúng
-  report: [acc@4, acc@1]        # acc@1 = tỷ lệ đúng trung bình của từng lượt lấy mẫu
-  temperature: 0.6              # [TẠM] đối chiếu với cài đặt đánh giá của RSR trước khi chạy
-  max_new_tokens: 2048          # [TẠM]
+  n_samples: 4                  # 4 lượt sinh độc lập mỗi câu; mọi chỉ số tính từ đúng 4 lượt này
+  # acc@4  = TRUNG BÌNH tỷ lệ đúng của 4 lượt (định nghĩa của bài RSR, A.4). Chỉ số chính.
+  # pass@4 = đúng nếu có ít nhất một trong 4 lượt đúng. Phép thử riêng cho thành phần đa dạng.
+  # Trước 30/09 tên hai chỉ số bị đặt ngược: "acc@4" ở đây từng là pass@4 và "acc@1" là acc@4 của RSR.
+  report: [acc@4, pass@4]
+  temperature: 0.6
+  top_p: 0.95
+  top_k: -1                     # tắt, như A.4
+  max_new_tokens: 3072          # bằng training.max_seq_len, đúng nguyên tắc của A.4 (họ dùng 32.768 cho cả hai)
+  on_truncation: keep           # câu trả lời vượt giới hạn bị cắt và chấm như bình thường, KHÔNG lấy mẫu lại
 
 signals:
   # Local Naturalness (Just 2025, phương trình 2): mỗi câu được chấm khi mô hình chỉ thấy đề bài và tối đa
   # ngần này câu liền trước. 4 là giá trị bài gốc chọn (phụ lục B.4) và LARK dùng lại (phụ lục C.2).
   # Trước 29/09 mã dùng khối 256 token không chồng nhau, không có đề bài: sai định nghĩa, đã bỏ.
   local_steps: 4
+  # true thì b1_fit không tính LocalNat (đắt gấp khoảng 5 lần phần còn lại). Chỉ bật cho mô hình học nào không
+  # chạy phương án Local Naturalness; hiện là mô hình 7 tỷ (configs/student/qwen7b.yaml).
+  skip_local_nat: false
   # Số vị trí xếp hạng mỗi lần trong b1. Xếp hạng phải so với toàn bộ 152.000 mục từ vựng, nên làm một
   # lần cho cả chuỗi tốn gần 8GB; chia đoạn 512 đưa xuống khoảng 1GB.
   rank_chunk: 512

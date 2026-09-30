@@ -12,3 +12,17 @@ training:
 # b1 nạp mô hình ở 16-bit. Mô hình 7 tỷ ở 16-bit chiếm khoảng 15GB nên KHÔNG vừa card 12GB:
 # chạy b1 cho mô hình này phải thêm cờ --load-4bit, và ghi vào phần Hạn chế rằng thứ hạng token
 # của riêng mô hình 7 tỷ được tính trên trọng số đã lượng tử.
+
+# Chốt 30/09 (trang Cấu hình đã chốt): mô hình 7 tỷ chỉ chạy ba phương án, mỗi phương án một seed.
+#   qd_rsr        dùng λ đã chọn trên mô hình 1,5 tỷ, không chọn lại
+#   rsr           cặp so sánh trực tiếp của QD-RSR
+#   correct_only  mốc của câu hỏi nghiên cứu; không phụ thuộc mô hình học nên tập chọn giống hệt ở 1,5 tỷ
+# Không chọn LARK vì tương quan +0,87 với RSR trên 1,5 tỷ. Một seed nên kết quả 7 tỷ chỉ mang tính chỉ báo.
+methods: [qd_rsr, rsr, correct_only]
+
+project:
+  train_seeds: [42]
+
+# Không phương án nào ở trên cần LocalNat, nên b1_fit bỏ nó (giữ GRAPE và LARK vì chung một lượt forward).
+signals:
+  skip_local_nat: true

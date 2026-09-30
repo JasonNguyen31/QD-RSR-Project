@@ -182,7 +182,7 @@ def build_pipeline() -> str:
     CY, CW, CX = 1590, 375, [820, 1256]
     frame(120, 1450, 1804, 340, GRN)
     header(163, 1525, "Stage C:", "evaluate and deploy")
-    for cx, (a, b) in zip(CX, [("6 benchmarks", "Acc@4, Acc@1"), ("GGUF", "Ollama")]):
+    for cx, (a, b) in zip(CX, [("6 benchmarks", "Acc@4, Pass@4"), ("GGUF", "Ollama")]):
         box(cx, CY, CW, BH, GRN_BG, GRN, GRN_TX, a, b)
     chain(CX, CY + BH / 2, CW)
 

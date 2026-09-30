@@ -31,6 +31,14 @@ python -m pytest tests/stage_a -q  # chỉ một nhóm
   bọc trong dấu nháy ba, LaTeX làm sai ký tự thoát, xuống dòng thật trong chuỗi, bị cắt cụt, và lớp cứu hộ.
 - **test_a5_embed.py** (5 bài) — phép đo phân bố khoảng cách, gồm bài phát hiện phân bố dồn cục.
 
+## stage_b/, stage_c/ (thêm 30/09)
+
+- **stage_b/test_seven_b_plan.py** — ba phương án của mô hình 7 tỷ, một seed, bỏ LocalNat; `b1_fit` không
+  ghi trường `local_nat` khi bỏ, và từ chối chạy bù làm file fit lẫn hai loại dòng.
+- **stage_c/test_metrics.py** — Acc@4 là TRUNG BÌNH 4 lượt (Phụ lục A.4 bài RSR), Pass@4 là có ít nhất một
+  lượt đúng; cài đặt đánh giá khớp A.4 và độ dài sinh bằng độ dài huấn luyện. Các bài này cố ý ghi cứng
+  giá trị đã chốt: sửa cấu hình mà không sửa quyết định thì bài phải hỏng.
+
 ## tools/
 
 - **test_api_tool.py** — đếm đúng số mô hình lỗi, cảnh báo khi không có `\boxed`.

@@ -4,6 +4,7 @@
     python -m src.stage_b.b1_fit --workdir data/pilot/run2_boxed --limit 200
     python -m src.stage_b.b1_fit --workdir data/stage_a --student qwen1_5b
     python -m src.stage_b.b1_fit --workdir data/stage_a --student qwen1_5b --base   # bản Base thay vì Instruct
+    python -m src.stage_b.b1_fit --workdir data/stage_a --student qwen7b --base --load-4bit   # 7B: tự bỏ LocalNat
 
 Đọc  <workdir>/candidates.jsonl và questions.jsonl
 Ghi  <workdir>/fit.<student>.jsonl   một dòng mỗi chuỗi, ghi dần nên chạy bù được
@@ -21,6 +22,10 @@ Bốn tín hiệu (đối chiếu bài gốc ngày 29/09/2026, xem src/stage_b/s
 
 RSR, GRAPE và phần của LARK đọc từ CÙNG MỘT lượt forward. LocalNat cần các lượt riêng, mỗi câu một mục,
 chạy theo lô. CHỈ RSR LÀ CỰC TIỂU. Đây là chỗ dễ cài nhầm nhất trong cả dự án.
+
+Bỏ LocalNat: đặt signals.skip_local_nat: true (configs/student/qwen7b.yaml đã đặt, chốt 30/09) hoặc thêm cờ
+--skip-localnat. Khi đó dòng kết quả KHÔNG có trường local_nat (không phải null), nên compare_fit và
+make_figures tự bỏ LocalNat khỏi ma trận. Một file fit không được trộn dòng có và không có LocalNat.
 
 Chuỗi được chấm ở đúng định dạng huấn luyện: system prompt huấn luyện, câu hỏi ở vai người dùng, chuỗi
 suy luận ở vai trợ lý. Chỉ các token của chuỗi suy luận được tính điểm, phần câu hỏi thì không.
@@ -238,13 +243,14 @@ def local_naturalness_naive(model, p_ids: Sequence[int], r_ids: Sequence[int], s
 
 
 def score_one(model, tok, question: str, trajectory: str, max_len: int, rank_clip: int,
-              local_k: int, chunk: int) -> dict | None:
+              local_k: int, chunk: int, with_local: bool = True) -> dict | None:
     ids, n_prompt, p_ids, r_ids, steps = build_inputs(tok, question, trajectory, max_len)
     if ids is None:
         return None
     stats = token_stats(model, ids, n_prompt, chunk)
     out = aggregate(stats["ranks"], stats["surprisals"], stats["sum_sq"], stats["target_probs"], rank_clip)
-    out["local_nat"] = local_naturalness(model, p_ids, r_ids, steps, local_k)
+    if with_local:
+        out["local_nat"] = local_naturalness(model, p_ids, r_ids, steps, local_k)
     out["n_steps"] = len(steps)
     out["signals_version"] = SIGNALS_VERSION
     return out
@@ -321,6 +327,18 @@ def selftest(model, tok, rank_clip: int, local_k: int, chunk: int) -> int:
 
 
 # ============================================================ dòng lệnh
+def check_local_consistency(first_row: Mapping | None, with_local: bool, name: str) -> None:
+    """Chặn việc chạy bù làm file fit lẫn dòng có và không có LocalNat."""
+    if first_row is None:
+        return
+    has_local = "local_nat" in first_row
+    if has_local != with_local:
+        was = "có" if has_local else "không có"
+        now = "tính" if with_local else "bỏ"
+        raise SystemExit(f"{name} {was} LocalNat, nhưng lần chạy này {now} LocalNat. Chạy bù sẽ làm file lẫn "
+                         f"hai loại dòng. Giữ đúng cài đặt cũ, hoặc ghi ra file khác bằng --out.")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--workdir", default="data/stage_a")
@@ -331,6 +349,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--load-4bit", action="store_true",
                     help="nạp mô hình ở 4-bit. Làm nhiễu thứ hạng token nên chỉ dùng khi 16-bit không vừa")
     ap.add_argument("--chunk", type=int, default=512, help="số vị trí xếp hạng mỗi lần")
+    ap.add_argument("--skip-localnat", action="store_true",
+                    help="không tính LocalNat (mặc định lấy signals.skip_local_nat trong cấu hình)")
     ap.add_argument("--out", help="tên file đầu ra, mặc định fit.<student>.jsonl")
     ap.add_argument("--override", action="append", default=[])
     args = ap.parse_args(argv)
@@ -341,12 +361,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     rank_clip = cfg["selection"]["rsr_rank_cap"]
     local_k = cfg["signals"]["local_steps"]
     max_len = cfg["training"]["max_seq_len"]
+    with_local = not (args.skip_localnat or cfg["signals"].get("skip_local_nat", False))
 
     import torch
     if not torch.cuda.is_available():
         raise SystemExit("Không thấy GPU. Lệnh này chạy trên máy Windows có card NVIDIA.")
     print(f"[b1] mô hình học {model_id}, {'4-bit' if args.load_4bit else '16-bit'}, "
-          f"ngưỡng cắt thứ hạng {rank_clip}, LocalNat {local_k} câu liền trước, độ dài tối đa {max_len}")
+          f"ngưỡng cắt thứ hạng {rank_clip}, "
+          + (f"LocalNat {local_k} câu liền trước" if with_local else "BỎ LocalNat")
+          + f", độ dài tối đa {max_len}")
     model, tok = load_student(model_id, args.load_4bit)
     print(f"[b1] nạp xong, chiếm {torch.cuda.max_memory_allocated() / 1024 ** 3:.2f} GB")
 
@@ -371,6 +394,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{path.name} được tạo bằng định nghĩa tín hiệu cũ (LARK là Brier, LocalNat là khối 256 token).\n"
                 f"Chạy bù lên file này sẽ bỏ qua mọi chuỗi. Đổi tên file cũ trước, ví dụ:\n"
                 f"    mv {path} {path.with_suffix('.v1.jsonl')}")
+        check_local_consistency(first, with_local, path.name)
     done = load_done_keys(path, lambda r: r["tid"])
     todo = [c for c in cands if c["tid"] not in done]
     print(f"[b1] {len(cands)} chuỗi, đã có {len(done)}, cần chấm {len(todo)}")
@@ -383,7 +407,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 failed += 1
                 continue
             try:
-                v = score_one(model, tok, q["question"], c["text"], max_len, rank_clip, local_k, args.chunk)
+                v = score_one(model, tok, q["question"], c["text"], max_len, rank_clip, local_k, args.chunk,
+                              with_local)
             except torch.cuda.OutOfMemoryError:
                 torch.cuda.empty_cache()
                 failed += 1
