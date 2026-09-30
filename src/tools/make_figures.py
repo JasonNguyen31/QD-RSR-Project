@@ -145,7 +145,7 @@ def build_pipeline() -> str:
     AY, AW, AX = 255, 300, [300, 661, 1022, 1383, 1743]
     frame(120, 120, 1804, 330, BLUE)
     header(163, 195, "Stage A:", "prepare data once")
-    for cx, (a, b) in zip(AX, [("2,000", "questions"), ("3 teachers", "× 3 samples"), ("18,000", "candidates"),
+    for cx, (a, b) in zip(AX, [("2,000", "questions"), ("3 teachers", "× 3 samples"), ("18,000", "trajectories"),
                                ("answer", "filtering"), ("Qual(t)", "embed(t)")]):
         box(cx, AY, AW, BH, BLUE_BG, BLUE, BLUE_TX, a, b)
     chain(AX, AY + BH / 2, AW)
@@ -155,11 +155,12 @@ def build_pipeline() -> str:
     frame(120, 720, 1804, 560, PUR)
     header(1880, 795, "Stage B:", "per student × per method", anchor="end")
     # "exact search": chọn lọc bằng duyệt hết mọi tập con cỡ k (tối đa 84), không dùng tham lam, vì Div không
-    # submodular. Số mẫu (cập nhật 23/09 sau khi thêm so tương đương sympy vào bộ chấm): 1.899 câu còn lại
-    # sau lọc đáp án, trừ 9 câu tụt dưới 3 ứng viên khi bỏ các chuỗi không có điểm giám khảo, còn
-    # 1.890 câu × 3 = 5.670.
+    # submodular. Số mẫu (cập nhật 29/09 sau khi chấm bù giám khảo, audit_stage_a 22/22): 1.899 câu còn lại
+    # sau lọc đáp án, trừ 4 câu tụt dưới 3 ứng viên khi bỏ 75 chuỗi không có điểm giám khảo, còn
+    # 1.895 câu × 3 = 5.685. Ô thứ ba của Stage A là 18.000 chuỗi SINH RA, chưa lọc; paper chỉ gọi
+    # "candidates" cho 15.010 chuỗi đúng, nên ô này ghi "trajectories" để hai chỗ không lệch nhau.
     for cx, (a, b) in zip(BX, [("Fit(t, m)", "once per student"), ("exact search", "max F(S, m)"),
-                               ("5,670 samples", "k = 3 per question"), ("QLoRA", "fine-tuning")]):
+                               ("5,685 samples", "k = 3 per question"), ("QLoRA", "fine-tuning")]):
         box(cx, BY, BW, BH, PUR_BG, PUR, PUR_TX, a, b)
     chain(BX, BY + BH / 2, BW)
 
