@@ -50,3 +50,19 @@ def test_signal_matrix_detects_signals_measuring_the_same_thing():
 def test_signal_matrix_skips_questions_with_too_few_candidates():
     rows = [row("q1|A|0"), row("q1|A|1")]                  # chỉ 2 ứng viên, dưới ngưỡng 3
     assert signal_matrix(rows, ["rsr", "grape"]) == {}
+
+
+def test_topk_agreement_counts_identical_top_sets():
+    from src.tools.compare_fit import topk_agreement
+    by_q = {"q1": [(5, 5), (4, 4), (3, 3), (1, 1)],       # cùng tập top-3
+            "q2": [(5, 1), (4, 4), (3, 3), (1, 5)],       # khác tập
+            "q3": [(1, 1), (2, 2), (3, 3)]}               # đúng k chuỗi, không tính
+    r = topk_agreement(by_q, 3)
+    assert (r["same"], r["questions"]) == (1, 2)
+
+
+def test_compare_two_returns_grouping_for_topk():
+    a = [row(f"q1|A|{i}", rsr=float(i)) for i in range(5)]
+    r = compare_two(a, a, "rsr")
+    from src.tools.compare_fit import topk_agreement
+    assert topk_agreement(r["by_q"], 3)["rate"] == 1.0

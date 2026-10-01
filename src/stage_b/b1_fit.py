@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import random
 import sys
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -327,6 +328,15 @@ def selftest(model, tok, rank_clip: int, local_k: int, chunk: int) -> int:
 
 
 # ============================================================ dòng lệnh
+def sample_questions(cands: Sequence[Mapping], n: int, seed: int) -> list:
+    """Giữ mọi ứng viên của n câu hỏi rút ngẫu nhiên. Cùng seed thì cùng mẫu, trên mọi máy."""
+    qids = sorted({c["qid"] for c in cands})
+    if n >= len(qids):
+        return list(cands)
+    keep = set(random.Random(seed).sample(qids, n))
+    return [c for c in cands if c["qid"] in keep]
+
+
 def check_local_consistency(first_row: Mapping | None, with_local: bool, name: str) -> None:
     """Chặn việc chạy bù làm file fit lẫn dòng có và không có LocalNat."""
     if first_row is None:
@@ -345,6 +355,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--student", default="qwen1_5b", help="tên file trong configs/student/")
     ap.add_argument("--base", action="store_true", help="dùng bản Base thay vì Instruct")
     ap.add_argument("--limit", type=int, help="chỉ chấm N chuỗi đầu, dùng để thử")
+    ap.add_argument("--sample-questions", type=int,
+                    help="chỉ chấm toàn bộ ứng viên của N câu hỏi rút ngẫu nhiên (seed project.data_seed); "
+                         "dùng cho phép so 4-bit với 16-bit, vì so xếp hạng cần đủ ứng viên của từng câu")
     ap.add_argument("--selftest", action="store_true", help="chỉ chạy kiểm chứng, không cần dữ liệu")
     ap.add_argument("--load-4bit", action="store_true",
                     help="nạp mô hình ở 4-bit. Làm nhiễu thứ hạng token nên chỉ dùng khi 16-bit không vừa")
@@ -382,6 +395,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     questions = {q["qid"]: q for q in read_jsonl(wd / files["questions"])}
     if not cands:
         raise SystemExit(f"Không có ứng viên trong {wd}. Chạy a3_filter trước.")
+    if args.sample_questions:
+        cands = sample_questions(cands, args.sample_questions, cfg["project"]["data_seed"])
+        print(f"[b1] rút {args.sample_questions} câu hỏi, {len(cands)} chuỗi")
     if args.limit:
         cands = cands[: args.limit]
 

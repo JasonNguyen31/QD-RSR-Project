@@ -49,7 +49,23 @@ def compare_two(a: Sequence[Mapping], b: Sequence[Mapping], signal: str) -> dict
         by_q[split_tid(t)[0]].append((oriented(ma[t], signal), oriented(mb[t], signal)))
     multi = {q: v for q, v in by_q.items() if len(v) >= 2}
     return {"n": len(shared), "questions": len(multi), "spearman": spearman(sa, sb),
-            "pairs": pair_agreement(multi), "top1": top1_agreement(multi)}
+            "pairs": pair_agreement(multi), "top1": top1_agreement(multi), "by_q": by_q}
+
+
+def topk_agreement(by_q: Mapping[str, list[tuple[float, float]]], k: int) -> dict:
+    """Tỷ lệ câu (có hơn k chuỗi) mà hai bên chọn ĐÚNG CÙNG tập k chuỗi. Đây là thứ b2_select dùng.
+
+    Hoà phá theo thứ tự xuất hiện, giống nhau ở hai bên, nên hai bảng điểm giống hệt cho kết quả 100%.
+    """
+    same = n = 0
+    for items in by_q.values():
+        if len(items) <= k:
+            continue
+        n += 1
+        ta = set(sorted(range(len(items)), key=lambda i: -items[i][0])[:k])
+        tb = set(sorted(range(len(items)), key=lambda i: -items[i][1])[:k])
+        same += ta == tb
+    return {"same": same, "questions": n, "rate": same / n if n else None}
 
 
 def signal_matrix(rows: Sequence[Mapping], names: Sequence[str]) -> dict:
@@ -130,6 +146,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     t = r["top1"]
     if t["rate"] is not None:
         print(f"   chọn cùng chuỗi phù hợp nhất   : {t['hit']}/{t['questions']} = {t['rate']:.1%}")
+    k = cfg["selection"]["k"]
+    tk = topk_agreement(r["by_q"], k)
+    if tk["rate"] is not None:
+        print(f"   chọn cùng tập top-{k}             : {tk['same']}/{tk['questions']} = {tk['rate']:.1%}"
+              f"   (câu có hơn {k} chuỗi; đây là thứ b2_select dùng)")
     print("\n   Đồng thuận cặp từ 85% trở lên: hai bản xếp hạng gần như giống nhau, chọn bản nào cũng được,")
     print("   nên theo bài gốc là Base. Dưới 70%: hai bản nhìn chuỗi khác nhau, phải chọn có cân nhắc và")
     print("   nêu rõ trong paper vì nó ảnh hưởng tới toàn bộ kết quả.")

@@ -28,6 +28,21 @@ def minmax(xs: Sequence[float]) -> list[float]:
     return [0.5] * len(xs) if hi - lo < 1e-12 else [(x - lo) / (hi - lo) for x in xs]
 
 
+def within_question_corr(rows: Sequence[dict], x: str, y: str) -> tuple[float | None, int]:
+    """Trung bình tương quan hạng giữa hai cột, tính trong từng câu hỏi có từ 3 chuỗi và có biến thiên."""
+    by_q: dict[str, list] = {}
+    for r in rows:
+        if r.get(x) is not None and r.get(y) is not None:
+            by_q.setdefault(split_tid(r["tid"])[0], []).append(r)
+    vals = []
+    for rs in by_q.values():
+        if len(rs) >= 3:
+            s = spearman([r[x] for r in rs], [r[y] for r in rs])
+            if s is not None:
+                vals.append(s)
+    return (sum(vals) / len(vals) if vals else None), len(vals)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--workdir", default="data/stage_a")
@@ -49,6 +64,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"   điểm quy tắc  và số từ          : {spearman(rule, words):+.3f}")
     print(f"   điểm giám khảo và số từ         : {spearman(llm, words):+.3f}")
     print("   Tương quan âm giữa hai nửa nghĩa là chúng kéo ngược nhau, và với alpha = 0,5 thì triệt tiêu.")
+    print("\n1b. ĐỘ NGHIÊNG VỀ CHUỖI DÀI ĐẾN TỪ NỬA NÀO (tương quan hạng với số từ, TRONG TỪNG câu hỏi rồi lấy")
+    print("    trung bình; đây là thang đo mà b2_select chịu ảnh hưởng, vì nó chọn trong từng câu)")
+    for name, key in (("Qual", "qual"), ("nửa quy tắc", "rule_score"), ("nửa giám khảo", "llm_score")):
+        v, nq = within_question_corr(rows, key, "n_words")
+        print(f"   {name:<14} và số từ : {v:+.3f}   ({nq} câu có từ 3 chuỗi)" if v is not None
+              else f"   {name:<14} và số từ : không đủ dữ liệu")
     print("   Tương quan cao giữa điểm quy tắc và số từ nghĩa là nửa này chủ yếu đang đo ĐỘ DÀI.")
 
     hi_rule = sorted(rows, key=lambda r: -r["rule_score"])[: len(rows) // 10]
