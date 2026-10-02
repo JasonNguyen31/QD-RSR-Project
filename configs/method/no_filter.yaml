@@ -1,7 +1,11 @@
-# No-Filter: rút ngẫu nhiên k chuỗi từ MỌI chuỗi của câu hỏi, kể cả chuỗi sai và chuỗi bị cắt. Cận dưới.
+# No-Filter: rút ngẫu nhiên k chuỗi từ mọi chuỗi HOÀN CHỈNH của câu hỏi, đúng hay sai đáp án đều lấy. Cận dưới.
+# Kho all_complete (chốt 02/10, thay cho kho all): bỏ chuỗi bị cắt, vì baseline Random của bài RSR rút từ kho
+# không lọc đáp án nhưng gần như không có chuỗi cụt (họ lấy mẫu lại tối đa 10 lần, tỷ lệ cắt cuối dưới 1%),
+# và a3 đã coi chuỗi cụt là không dùng làm mẫu huấn luyện được. Đo trên dữ liệu thật: kho all rút trúng 699
+# chuỗi sai trong đó 129 chuỗi bị cắt; kho all_complete rút trúng 621 chuỗi sai.
 # Tập câu hỏi vẫn là tập chung của mọi phương án; chuỗi thiếu Qual và chuỗi rỗng vẫn bị loại.
 # Cần trajectories*.jsonl nên chỉ chạy được trên máy giữ dữ liệu gốc.
 select:
   name: no_filter
-  pool: all
+  pool: all_complete
   rule: random

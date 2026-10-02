@@ -222,18 +222,18 @@ def test_all_complete_pool_drops_truncated_chains_everywhere(work):
     in_all = {t for q in inp.questions("all", "objective").values() for t in q["tids"]}
     in_complete = {t for q in inp.questions("all_complete", "objective").values() for t in q["tids"]}
     assert in_all - in_complete == set(cut) & in_all and set(cut) & in_all
-    # bộ đếm chuỗi bị cắt trong tóm tắt
-    qs, _picked_sets, picks = _picked(inp, _cfg(ablation="no_prefilter"))
+    # bộ đếm chuỗi bị cắt trong tóm tắt, trên kho có cả chuỗi bị cắt
+    qs, _picked_sets, picks = _picked(inp, _cfg(ablation="no_prefilter", overrides=["select.pool=all"]))
     s = b2.summarize(qs, picks, 3)
     chosen = {qs[q]["tids"][i] for q, p in picks.items() for i in p["idx"]}
     assert s["truncated_kept"] == len(chosen & set(cut)) <= s["wrong_kept"]
-    # đổi kho của biến thể sang all_complete thì không còn chuỗi bị cắt nào được chọn
-    cfg2 = _cfg(ablation="no_prefilter", overrides=["select.pool=all_complete"])
-    qs2, picked2, picks2 = _picked(inp, cfg2)
+    # kho đã chốt của hai phương án "không lọc" là all_complete: không chuỗi bị cắt nào được chọn
+    qs2, picked2, picks2 = _picked(inp, _cfg(ablation="no_prefilter"))
     assert b2.summarize(qs2, picks2, 3)["truncated_kept"] == 0 and set(picked2) == set(inp.pool)
-    # No-Filter trên all_complete cũng không rút trúng chuỗi bị cắt
-    nf = _picked(inp, _cfg("no_filter", overrides=["select.pool=all_complete"]))[1]
+    nf = _picked(inp, _cfg("no_filter"))[1]
     assert not {t for s_ in nf.values() for t in s_} & set(cut)
+    nf_all = _picked(inp, _cfg("no_filter", overrides=["select.pool=all"]))[1]
+    assert {t for s_ in nf_all.values() for t in s_} & set(cut)       # còn kho all thì có thể rút trúng
 
 
 def test_combine_refuses_when_embeddings_or_fit_are_incomplete(work):
@@ -261,6 +261,13 @@ def test_no_prefilter_runs_on_the_extended_pool_and_can_pick_wrong_chains(work):
     assert s["wrong_kept"] >= 0 and s["mean_div"] is not None
     # kho chuỗi đúng không bị ảnh hưởng: QD-RSR vẫn chọn như khi chưa chấm bù
     assert all(all(v["correct"]) for v in inp.questions("correct", "objective").values())
+
+
+def test_both_unfiltered_methods_use_the_complete_pool():
+    """Chốt 02/10: No-Filter và no_prefilter cùng dùng kho all_complete (bỏ chuỗi bị cắt), để hai dòng "không
+    lọc" trong paper mang cùng một nghĩa và khớp cách bài RSR xử lý chuỗi cụt. Ghi cứng có chủ đích."""
+    assert _cfg("no_filter").select.pool == "all_complete"
+    assert _cfg(ablation="no_prefilter").select.pool == "all_complete"
 
 
 def test_unjudgeable_wrong_chain_is_dropped_from_the_extended_pool_only(work):

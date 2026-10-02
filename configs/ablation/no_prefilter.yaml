@@ -1,7 +1,10 @@
-# Không lọc sơ bộ: hàm mục tiêu QD-RSR trên mọi chuỗi của câu hỏi, kể cả chuỗi sai và chuỗi bị cắt.
-# Giữ biến thể này (quyết định 02/10). Cần kho mở rộng do src/tools/backfill_wrong tạo: quality.all.jsonl,
-# embeddings.wrong.npz, fit.<student>_base.wrong.jsonl. Qual, Fit và ĝ đều tính lại trên nhóm mở rộng của từng
-# câu, nên khác giá trị của kho chuỗi đúng. Chưa có ba file đó thì b2_select dừng, không âm thầm bỏ chuỗi sai.
+# Không lọc sơ bộ: hàm mục tiêu QD-RSR trên mọi chuỗi HOÀN CHỈNH của câu hỏi, kể cả chuỗi sai đáp án.
+# Kho all_complete (chốt 02/10, thay cho kho all): biến thể này chỉ gỡ đúng một thứ là bước lọc ĐÁP ÁN, như phép
+# so "With Correctness Filtering" của bài RSR, nơi chuỗi bị cắt đã được xử lý từ lúc sinh. Đo trên dữ liệu thật:
+# với kho all, 263 trong 454 chuỗi sai được chọn là chuỗi bị cắt (nửa quy tắc của Qual thưởng độ dài), nên kết quả
+# sẽ do chuỗi cụt chi phối; với kho all_complete, biến thể chọn 266 chuỗi sai đáp án, so với 621 của No-Filter.
+# Cần kho mở rộng do src/tools/backfill_wrong tạo: quality.all_complete.jsonl, embeddings.wrong.npz,
+# fit.<student>_base.wrong.jsonl. Qual, Fit và ĝ tính lại trên nhóm mở rộng của từng câu có chuỗi sai.
 select:
   name: no_prefilter
-  pool: all
+  pool: all_complete
