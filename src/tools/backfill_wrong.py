@@ -20,12 +20,19 @@ File ghi vào <workdir> (tên lấy từ b2_select.extended_files):
     judge.wrong.jsonl                điểm giám khảo của chuỗi sai
     embeddings.wrong.npz             biểu diễn của chuỗi sai
     fit.<student>_base.wrong.jsonl   tín hiệu của mô hình học cho chuỗi sai, không có LocalNat
-    quality.all.jsonl                Qual của KHO MỞ RỘNG: mọi chuỗi đúng dùng được cộng mọi chuỗi sai
+    quality.all.jsonl                Qual của kho mở rộng "all": mọi chuỗi đúng dùng được cộng mọi chuỗi sai
+    quality.all_complete.jsonl       Qual của kho "all_complete": như trên nhưng bỏ chuỗi bị cắt
 
-Vì sao Qual phải là file riêng cho cả kho mở rộng chứ không chỉ thêm dòng cho chuỗi sai: điểm quy tắc là điểm z
-trên toàn tập, và cả hai nửa của Qual được min-max trong từng câu hỏi. Thêm chuỗi sai vào nhóm làm đổi cả hai,
-nên Qual của chuỗi đúng trong kho mở rộng khác Qual trong quality.jsonl. Điểm giám khảo thô, biểu diễn và tín
-hiệu của mô hình học thì tính riêng cho từng chuỗi, nên chỉ cần chấm thêm phần chuỗi sai.
+Vì sao Qual phải là file riêng cho từng kho mở rộng chứ không chỉ thêm dòng cho chuỗi sai: cả hai nửa của Qual
+được min-max trong từng câu hỏi, nên thêm chuỗi sai vào một câu làm đổi Qual của cả các chuỗi đúng trong câu
+đó. Điểm giám khảo thô, biểu diễn và tín hiệu của mô hình học thì tính riêng cho từng chuỗi, nên chỉ cần chấm
+thêm phần chuỗi sai.
+
+Điểm quy tắc của chuỗi sai được chấm trên THANG CỦA KHO GỐC (rule_scores_with_reference, tham chiếu là
+candidates.jsonl), không chuẩn hoá lại trên kho mở rộng. Bản đầu (02/10) chuẩn hoá lại trên cả kho mở rộng,
+làm trung bình và độ lệch chuẩn đổi, kéo theo điểm quy tắc của mọi chuỗi đúng đổi: trên dữ liệu thật, 97 trong
+1.236 câu KHÔNG có chuỗi sai nào vẫn bị đổi tập chọn. Với cách hiện tại, câu không có chuỗi sai có Qual giống
+hệt quality.jsonl, và bước combine dừng nếu không đúng như vậy.
 
 Chuỗi sai là gì: mọi chuỗi của các câu hỏi dùng được mà không nằm trong candidates.jsonl (sai đáp án, bị cắt,
 thiếu \\boxed), trừ chuỗi rỗng. Cùng một hàm (b2_select.all_chains_pool) định nghĩa kho này cho b2_select,
@@ -48,7 +55,9 @@ from typing import Mapping, Sequence
 from src.common.config import load_config, resolve_path
 from src.common.io_utils import read_jsonl, write_jsonl
 from src.common.prompts import build_judge_prompt
-from src.stage_b.b2_select import all_chains_pool, extended_files, usable_pool
+from src.common.rule_score import rule_scores_with_reference
+from src.stage_b.b2_select import (EXTENDED_POOLS, all_chains_pool, extended_files, extended_quality_file,
+                                   is_truncated, usable_pool)
 
 
 def md5_of(path: Path) -> str:
@@ -232,8 +241,9 @@ def step_status(wd: Path, names: Mapping[str, str]) -> int:
     print(f"[bù] {names['wrong']}: {c['total']} chuỗi sai, md5 {md5_of(wd / names['wrong'])}")
     for key in ("judge", "embeddings", "fit"):
         print(f"[bù] {names[key]:<34} {c[key]}/{c['total']}")
-    q = wd / names["quality"]
-    print(f"[bù] {names['quality']:<34} " + (f"{len(read_jsonl(q))} dòng" if q.exists() else "chưa có, chạy --step combine"))
+    for pool in EXTENDED_POOLS:
+        q = wd / extended_quality_file(pool)
+        print(f"[bù] {q.name:<34} " + (f"{len(read_jsonl(q))} dòng" if q.exists() else "chưa có, chạy --step combine"))
     return 0
 
 
@@ -252,29 +262,44 @@ def step_combine(cfg: Mapping, wd: Path, names: Mapping[str, str]) -> int:
         raise SystemExit("Chưa đủ để ghép: " + "; ".join(lacking) + " chuỗi. Biểu diễn và tín hiệu phải đủ cho mọi "
                          "chuỗi sai (chỉ điểm giám khảo được phép thiếu, chuỗi đó sẽ bị loại khỏi kho mở rộng).")
     judge_rows = read_jsonl(wd / "judge.jsonl") + read_jsonl(wd / names["judge"])
-    rows = combine(extended_candidates(pool, wrong), judge_rows, cfg["quality"]["alpha"])
-    by_tid = {r["tid"]: r for r in rows}
-    drift = [t for t, r in by_tid.items() if t in quality and r["llm_score"] != quality[t].get("llm_score")]
-    if drift:
-        raise SystemExit(f"Điểm giám khảo của {len(drift)} chuỗi đúng khác quality.jsonl (ví dụ {drift[:3]}): "
-                         f"quality.jsonl cũ hơn judge.jsonl, chạy a4_score_quality --rule-only trước.")
-    write_jsonl(wd / names["quality"], rows)
+    reference = [c["text"] for c in cands]          # thang điểm quy tắc của kho gốc, đúng thứ tự a4 đã dùng
+    for pool_name in EXTENDED_POOLS:
+        part = [c for c in wrong if not (pool_name == "all_complete" and is_truncated(c))]
+        chains = extended_candidates(pool, part)
+        rule = rule_scores_with_reference([c["text"] for c in chains], reference)
+        rows = combine(chains, judge_rows, cfg["quality"]["alpha"], rule=rule)
+        by_tid = {r["tid"]: r for r in rows}
+        drift = [t for t, r in by_tid.items() if t in quality and (
+            r["llm_score"] != quality[t].get("llm_score") or r["rule_score"] != quality[t].get("rule_score"))]
+        if drift:
+            raise SystemExit(f"Điểm giám khảo hoặc điểm quy tắc của {len(drift)} chuỗi đúng khác quality.jsonl (ví dụ "
+                             f"{drift[:3]}): quality.jsonl cũ hơn judge.jsonl hoặc candidates.jsonl, chạy "
+                             f"a4_score_quality --rule-only trước.")
+        touched = {c["qid"] for c in part}
+        leaked = [t for t, r in by_tid.items() if r["qid"] not in touched and r["qual"] != quality[t].get("qual")]
+        if leaked:
+            raise SystemExit(f"Qual của {len(leaked)} chuỗi thuộc câu KHÔNG có chuỗi sai lại khác quality.jsonl (ví dụ "
+                             f"{leaked[:3]}). Kho mở rộng không được làm đổi các câu đó; đừng dùng file này.")
+        out = wd / extended_quality_file(pool_name)
+        write_jsonl(out, rows)
 
-    wrong_tids = {c["tid"] for c in wrong}
-    no_qual = sum(1 for t in wrong_tids if by_tid[t]["qual"] is None)
-    moved = [abs(r["qual"] - quality[t]["qual"]) for t, r in by_tid.items() if t in quality and r["qual"] is not None]
-    w_llm = [by_tid[t]["llm_score"] for t in wrong_tids if by_tid[t]["llm_score"] is not None]
-    c_llm = [r["llm_score"] for t, r in by_tid.items() if t not in wrong_tids and r["llm_score"] is not None]
-    print(f"[bù] đã ghi {names['quality']}: {len(rows)} chuỗi ({len(rows) - len(wrong)} đúng, {len(wrong)} sai), "
-          f"md5 {md5_of(wd / names['quality'])}")
-    print(f"[bù] chuỗi sai giám khảo không chấm được: {no_qual} (b2_select loại khỏi kho mở rộng)")
-    if w_llm:
-        print(f"[bù] điểm giám khảo trung bình: chuỗi sai {statistics.mean(w_llm):.3f}, chuỗi đúng "
-              f"{statistics.mean(c_llm):.3f}. Chuỗi sai phải thấp hơn rõ; nếu không thì giám khảo không phân biệt "
-              f"được đáp án sai và biến thể không lọc mất ý nghĩa.")
-    print(f"[bù] Qual của chuỗi đúng đổi trung bình {statistics.mean(moved):.3f} so với quality.jsonl "
-          f"(đổi ở {sum(m > 1e-9 for m in moved)}/{len(moved)} chuỗi), đúng như dự kiến khi thêm chuỗi sai vào nhóm.")
-    print("[bù] xong. Chạy: python -m src.stage_b.b2_select --ablation no_prefilter")
+        part_tids = {c["tid"] for c in part}
+        no_qual = sum(1 for t in part_tids if by_tid[t]["qual"] is None)
+        moved = sum(1 for t, r in by_tid.items() if t in quality and r["qual"] is not None
+                    and abs(r["qual"] - quality[t]["qual"]) > 1e-9)
+        w_llm = [by_tid[t]["llm_score"] for t in part_tids if by_tid[t]["llm_score"] is not None]
+        c_llm = [r["llm_score"] for t, r in by_tid.items() if t not in part_tids and r["llm_score"] is not None]
+        print(f"[bù] {out.name}: {len(rows)} chuỗi ({len(rows) - len(part)} đúng, {len(part)} sai thuộc "
+              f"{len(touched)} câu), md5 {md5_of(out)}")
+        print(f"     chuỗi sai giám khảo không chấm được: {no_qual} (b2_select loại khỏi kho này)")
+        if w_llm:
+            print(f"     điểm giám khảo trung bình: chuỗi sai {statistics.mean(w_llm):.3f}, chuỗi đúng "
+                  f"{statistics.mean(c_llm):.3f}")
+        print(f"     Qual của chuỗi đúng đổi ở {moved} chuỗi, tất cả thuộc {len(touched)} câu có chuỗi sai; "
+              f"{len(pool) - len(touched)} câu còn lại giống hệt quality.jsonl")
+    print("[bù] xong. Chuỗi sai phải có điểm giám khảo thấp hơn rõ chuỗi đúng; nếu không thì giám khảo không phân "
+          "biệt được đáp án sai và biến thể không lọc mất ý nghĩa.")
+    print("[bù] Chạy: python -m src.stage_b.b2_select --ablation no_prefilter")
     return 0
 
 

@@ -163,7 +163,7 @@ def test_backfill_never_touches_the_existing_files(work):
     _backfill(wd)
     assert _md5s(wd) == before
     for name in ("candidates.wrong.jsonl", "judge.wrong.jsonl", "embeddings.wrong.npz",
-                 "fit.qwen1_5b_base.wrong.jsonl", "quality.all.jsonl"):
+                 "fit.qwen1_5b_base.wrong.jsonl", "quality.all.jsonl", "quality.all_complete.jsonl"):
         assert (wd / name).exists()
 
 
@@ -176,12 +176,64 @@ def test_extended_quality_renormalises_within_the_larger_group(work):
     assert wrong <= set(new) and "math_00002|deepseek|0" not in new          # chuỗi đúng thiếu Qual vẫn ở ngoài
     shared = [t for t in new if t in old]
     assert all(new[t]["llm_score"] == old[t]["llm_score"] for t in shared)   # điểm giám khảo thô không đổi
-    assert any(abs(new[t]["qual"] - old[t]["qual"]) > 1e-6 for t in shared)  # nhưng Qual đổi vì nhóm đổi
+    assert all(new[t]["rule_score"] == old[t]["rule_score"] for t in shared)  # điểm quy tắc trên thang kho gốc
+    touched = {new[t]["qid"] for t in wrong}
+    assert any(abs(new[t]["qual"] - old[t]["qual"]) > 1e-6 for t in shared if new[t]["qid"] in touched)
+    untouched = [t for t in shared if new[t]["qid"] not in touched]
+    assert untouched and all(new[t]["qual"] == old[t]["qual"] for t in untouched)   # câu không có chuỗi sai: y nguyên
     by_q = {}
     for r in new.values():
         by_q.setdefault(r["qid"], []).append(r)
     for rows in by_q.values():                                               # min-max trên cả nhóm mở rộng
         assert min(r["rule_norm"] for r in rows) == 0.0 and max(r["rule_norm"] for r in rows) == 1.0
+
+
+def test_questions_without_wrong_chains_are_selected_exactly_as_in_the_correct_pool(work):
+    """Hồi quy cho lỗi đo được 02/10: chuẩn hoá lại điểm quy tắc trên kho mở rộng làm 97/1.236 câu KHÔNG có
+    chuỗi sai nào vẫn đổi tập chọn. Kho mở rộng chỉ được làm đổi những câu có chuỗi sai."""
+    wd, cfg, _ = work
+    _backfill(wd)
+    inp = b2.Inputs(cfg, wd, "fit.qwen1_5b_base.jsonl")
+    touched = {c["qid"] for c in read_jsonl(wd / "candidates.wrong.jsonl")}
+    untouched = set(inp.pool) - touched
+    assert untouched and touched
+    for lam in (0.0, 0.4, 1.0):
+        over = [f"selection.lambda_div={lam}"]
+        base = _picked(inp, _cfg(overrides=over))[1]
+        ext = _picked(inp, _cfg(ablation="no_prefilter", overrides=over))[1]
+        assert all(base[q] == ext[q] for q in untouched), lam
+    assert any(base[q] != ext[q] for q in touched)            # còn câu có chuỗi sai thì được phép đổi
+
+
+def test_all_complete_pool_drops_truncated_chains_everywhere(work):
+    wd, cfg, _ = work
+    traj = read_jsonl(wd / "trajectories.jsonl")
+    cands = {c["tid"] for c in read_jsonl(wd / "candidates.jsonl")}
+    cut = [t["tid"] for t in traj if t["tid"] not in cands][:15]
+    for t in traj:
+        if t["tid"] in cut:
+            t["finish_reason"] = "length"
+    write_jsonl(wd / "trajectories.jsonl", traj)
+    _backfill(wd)
+    full = {r["tid"] for r in read_jsonl(wd / "quality.all.jsonl")}
+    complete = {r["tid"] for r in read_jsonl(wd / "quality.all_complete.jsonl")}
+    assert set(cut) <= full and not set(cut) & complete and complete < full
+    inp = b2.Inputs(cfg, wd, "fit.qwen1_5b_base.jsonl")
+    in_all = {t for q in inp.questions("all", "objective").values() for t in q["tids"]}
+    in_complete = {t for q in inp.questions("all_complete", "objective").values() for t in q["tids"]}
+    assert in_all - in_complete == set(cut) & in_all and set(cut) & in_all
+    # bộ đếm chuỗi bị cắt trong tóm tắt
+    qs, _picked_sets, picks = _picked(inp, _cfg(ablation="no_prefilter"))
+    s = b2.summarize(qs, picks, 3)
+    chosen = {qs[q]["tids"][i] for q, p in picks.items() for i in p["idx"]}
+    assert s["truncated_kept"] == len(chosen & set(cut)) <= s["wrong_kept"]
+    # đổi kho của biến thể sang all_complete thì không còn chuỗi bị cắt nào được chọn
+    cfg2 = _cfg(ablation="no_prefilter", overrides=["select.pool=all_complete"])
+    qs2, picked2, picks2 = _picked(inp, cfg2)
+    assert b2.summarize(qs2, picks2, 3)["truncated_kept"] == 0 and set(picked2) == set(inp.pool)
+    # No-Filter trên all_complete cũng không rút trúng chuỗi bị cắt
+    nf = _picked(inp, _cfg("no_filter", overrides=["select.pool=all_complete"]))[1]
+    assert not {t for s_ in nf.values() for t in s_} & set(cut)
 
 
 def test_combine_refuses_when_embeddings_or_fit_are_incomplete(work):

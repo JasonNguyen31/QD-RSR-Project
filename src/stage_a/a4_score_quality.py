@@ -315,13 +315,19 @@ def minmax_within(values: Sequence[float]) -> list[float]:
     return [(v - lo) / (hi - lo) for v in values]
 
 
-def combine(cands: Sequence[Mapping], judge_rows: Sequence[Mapping], alpha: float) -> list[dict]:
+def combine(cands: Sequence[Mapping], judge_rows: Sequence[Mapping], alpha: float,
+            rule: tuple[Sequence[float], Sequence[Mapping]] | None = None) -> list[dict]:
     """Ghép rule và judge. Chuỗi chưa có điểm giám khảo thì llm_score, qual và hai cột norm đều là None.
 
     Min-max tính trên các chuỗi CÓ điểm giám khảo của cùng một câu hỏi, vì chuỗi thiếu điểm bị loại khỏi
     mọi phương án; tính cả chúng thì thang của nửa quy tắc phụ thuộc vào chuỗi không bao giờ được chọn.
+
+    rule: (điểm quy tắc, đặc trưng) đã tính sẵn cho đúng các chuỗi trong cands. Mặc định chấm bằng rule_scores
+    trên chính cands. backfill_wrong truyền điểm tính trên thang của kho gốc (rule_scores_with_reference).
     """
-    scores, feats = rule_scores([c["text"] for c in cands])
+    scores, feats = rule if rule is not None else rule_scores([c["text"] for c in cands])
+    if len(scores) != len(cands):
+        raise ValueError(f"điểm quy tắc có {len(scores)} dòng, cands có {len(cands)}")
     jmap = {r["tid"]: r["overall_score"] for r in judge_rows}
     out = []
     for c, rs, f in zip(cands, scores, feats):

@@ -60,3 +60,18 @@ def test_weight_validation():
     with pytest.raises(ValueError):
         rule_scores(["a"], weights={"elaborated": 0.5, "khong_co_cach_do": 0.5})
     assert abs(sum(DEFAULT_WEIGHTS.values()) - 1.0) < 1e-9
+
+
+def test_scores_against_a_reference_keep_reference_chains_bit_identical():
+    """Chấm thêm chuỗi ngoài kho gốc không được làm đổi điểm của chuỗi trong kho gốc (dùng cho kho mở rộng)."""
+    from src.common.rule_score import rule_scores_with_reference
+    ref = ["We check the sum. Therefore it is 4.", "Perhaps x might be 2 since 2 + 2 = 4 so we verify it again now.",
+           "Short.", "Since a = b, therefore b = a. We check: yes."]
+    extra = ["word " * 400, "perhaps perhaps might"]
+    base, _ = rule_scores(ref)
+    got, feats = rule_scores_with_reference(ref + extra, ref)
+    assert got[:len(ref)] == base                              # giống từng bit, không chỉ xấp xỉ
+    assert rule_scores(ref + extra)[0][:len(ref)] != base      # còn chuẩn hoá lại trên kho gộp thì đổi
+    assert got[len(ref)] > max(base) and feats[len(ref)]["elaborated"] == 400
+    with pytest.raises(ValueError):
+        rule_scores_with_reference(ref, [])

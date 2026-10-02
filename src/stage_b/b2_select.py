@@ -10,9 +10,11 @@
     python -m src.stage_b.b2_select --student qwen1_5b --report --versus qwen7b   # 7B chọn khác 1,5B bao nhiêu
 
 Đọc  <workdir>/candidates.jsonl, questions.jsonl, quality.jsonl, embeddings.npz, fit.<student>_base.jsonl
-     Kho "all" đọc thêm trajectories*.jsonl (chỉ có trên máy giữ dữ liệu gốc). Kho "all" đi với hàm mục tiêu
-     (biến thể no_prefilter) còn cần ba file của kho mở rộng do src/tools/backfill_wrong tạo:
-     quality.all.jsonl, embeddings.wrong.npz, fit.<student>_base.wrong.jsonl
+     Hai kho mở rộng đọc thêm trajectories*.jsonl (chỉ có trên máy giữ dữ liệu gốc):
+         all            mọi chuỗi của câu hỏi, kể cả chuỗi sai và chuỗi bị cắt
+         all_complete   như trên nhưng bỏ chuỗi bị cắt (finish_reason = length), tức chỉ gỡ bước lọc ĐÁP ÁN
+     Kho mở rộng đi với hàm mục tiêu (biến thể no_prefilter) còn cần ba file do src/tools/backfill_wrong tạo:
+     quality.<kho>.jsonl, embeddings.wrong.npz, fit.<student>_base.wrong.jsonl
 Ghi  data/stage_b/<student>_base/train.<tên>.jsonl    một dòng mỗi chuỗi được chọn, kèm đề bài, văn bản, trọng số
      data/stage_b/<student>_base/select.<tên>.json    tham số đã dùng, số liệu của tập chọn, md5 của file train
      data/stage_b/<student>_base/pool.json            số liệu của kho ứng viên (dòng đầu của bảng I.9)
@@ -34,10 +36,11 @@ Các quy ước đã chốt mà mã này thực thi:
   - Fit = 1 − minmax(RSR) và ĝ của LARK tính trên kho đã loại các chuỗi nói trên (signals.add_lark dặn rõ:
     đổi nhóm ứng viên thì phải tính lại ĝ).
   - Qual lấy thẳng cột qual (mỗi nửa đã min-max trong câu hỏi rồi trộn), giống lambda_scan.
-  - Kho mở rộng có Qual RIÊNG (quality.all.jsonl): thêm chuỗi sai làm đổi min-max trong từng câu, nên Qual
-    của cả chuỗi đúng cũng khác quality.jsonl. Fit và ĝ cũng tính lại trên nhóm mở rộng. Chuỗi sai mà giám
-    khảo không chấm được thì bị loại khỏi kho này, cùng quy tắc với chuỗi đúng thiếu Qual. No-Filter không
-    dùng tín hiệu nào nên không đọc các file này và không đổi khi chấm bù.
+  - Mỗi kho mở rộng có Qual RIÊNG (quality.<kho>.jsonl): thêm chuỗi sai làm đổi min-max trong từng câu có
+    chuỗi sai, nên ở các câu đó Qual của chuỗi đúng cũng khác quality.jsonl; Fit và ĝ cũng tính lại trên nhóm
+    mở rộng. Điểm quy tắc của chuỗi sai chấm trên thang của kho gốc, nên câu nào không có chuỗi sai thì Qual,
+    Fit và tập được chọn giống hệt kho chuỗi đúng. Chuỗi sai mà giám khảo không chấm được thì bị loại khỏi kho
+    này, cùng quy tắc với chuỗi đúng thiếu Qual. No-Filter không dùng tín hiệu nào nên không đọc các file này.
   - Phương án có khoá select.blocked trong file cấu hình chưa được phép dùng để huấn luyện; b2 từ chối trừ
     khi thêm --allow-blocked, và khi đó tên file mang đuôi .tam để không lẫn với bản chính thức.
   - LARK ghi trọng số mềm (signals.lark_weights) nhân k, để trung bình bằng 1 như trọng số của các phương án
@@ -72,6 +75,7 @@ from src.stage_b.signals import SIGNALS_VERSION, lark_ghat, lark_weights
 SIGNAL_COLUMN = {"token_length": "n_tokens"}      # tên tín hiệu trong cấu hình -> cột của file fit
 FIT_COLUMNS = ("rsr", "grape", "local_nat", "n_tokens")
 PINNED_IN_ALL = ("selection.a", "selection.b", "selection.lambda_div")
+EXTENDED_POOLS = ("all", "all_complete")          # kho có cả chuỗi sai; all_complete bỏ chuỗi bị cắt
 TIE_EPS = 1e-12
 
 
@@ -102,8 +106,19 @@ def student_tag(cfg: Mapping) -> str:
 
 def extended_files(cfg: Mapping) -> dict:
     """Tên các file của kho mở rộng (chuỗi đúng cộng chuỗi sai). backfill_wrong ghi, b2_select đọc."""
-    return {"wrong": "candidates.wrong.jsonl", "judge": "judge.wrong.jsonl", "quality": "quality.all.jsonl",
+    return {"wrong": "candidates.wrong.jsonl", "judge": "judge.wrong.jsonl",
             "embeddings": "embeddings.wrong.npz", "fit": f"fit.{student_tag(cfg)}.wrong.jsonl"}
+
+
+def extended_quality_file(pool: str) -> str:
+    """Qual của một kho mở rộng: quality.all.jsonl, quality.all_complete.jsonl."""
+    if pool not in EXTENDED_POOLS:
+        raise ValueError(f"không phải kho mở rộng: {pool!r}")
+    return f"quality.{pool}.jsonl"
+
+
+def is_truncated(chain: Mapping) -> bool:
+    return chain.get("finish_reason") == "length"
 
 
 def check_fit_rows(rows: Sequence[Mapping], name: str, want_model: str) -> None:
@@ -138,13 +153,16 @@ def usable_pool(cands: Sequence[Mapping], quality: Mapping[str, Mapping], min_co
                   "usable_candidates": sum(len(v) for v in kept.values())}
 
 
-def all_chains_pool(trajectories: Sequence[Mapping], kept_qids: set, excluded: set) -> tuple[dict, int]:
+def all_chains_pool(trajectories: Sequence[Mapping], kept_qids: set, excluded: set,
+                    complete_only: bool = False) -> tuple[dict, int]:
     """Kho không lọc đáp án: mọi chuỗi (đúng, sai, bị cắt) của các câu được giữ, trừ chuỗi rỗng và chuỗi đã
-    bị loại vì thiếu Qual. Trả về (kho, số chuỗi rỗng bị bỏ)."""
+    bị loại vì thiếu Qual. complete_only bỏ thêm chuỗi bị cắt. Trả về (kho, số chuỗi rỗng bị bỏ)."""
     by_q: dict[str, list] = defaultdict(list)
     empty = 0
     for t in trajectories:
         if t["qid"] not in kept_qids or t["tid"] in excluded:
+            continue
+        if complete_only and is_truncated(t):
             continue
         if not (t.get("text") or "").strip():
             empty += 1
@@ -171,8 +189,8 @@ def assemble(pool: Mapping[str, Sequence[Mapping]], correct_tids: set, quality: 
     complete = not sum(miss.values())
     if need_signals and not complete:
         detail = ", ".join(f"{k} thiếu {v} chuỗi" for k, v in miss.items() if v)
-        raise SystemExit(f"Kho này cần đủ tín hiệu cho mọi chuỗi, nhưng {detail}. Nếu là kho 'all' thì chuỗi sai "
-                         f"chưa được chấm: phải chạy a4, a5 và b1 cho chúng trước.")
+        raise SystemExit(f"Kho này cần đủ tín hiệu cho mọi chuỗi, nhưng {detail}. Nếu là kho mở rộng thì chuỗi sai "
+                         f"chưa được chấm, hoặc file của kho mở rộng đã cũ: chạy lại backfill_wrong.")
     out = {}
     for qid in sorted(pool):
         chains = sorted(pool[qid], key=lambda c: order_key(seed, c["tid"]))
@@ -183,7 +201,8 @@ def assemble(pool: Mapping[str, Sequence[Mapping]], correct_tids: set, quality: 
              "llm": [quality.get(t, {}).get("llm_score") for t in tids],
              # độ dài: token của mô hình học (file fit); chuỗi chưa chấm thì lấy số token mà API báo
              "n_tokens": [(f["n_tokens"] if f else c.get("completion_tokens")) for f, c in zip(frows, chains)],
-             "api_length": [f is None for f in frows], "signals": {}}
+             "api_length": [f is None for f in frows], "truncated": [is_truncated(c) for c in chains],
+             "signals": {}}
         if complete:
             for col in FIT_COLUMNS:
                 if all(col in f for f in frows):
@@ -286,7 +305,7 @@ def pool_stats(questions: Mapping[str, Mapping]) -> dict:
 
 def summarize(questions: Mapping[str, Mapping], picks: Mapping[str, Mapping], k: int) -> dict:
     teachers, toks, weights, divs, fits, quals, greedy = [], [], [], [], [], [], []
-    judge_zero = wrong = api_len = 0
+    judge_zero = wrong = api_len = truncated = 0
     for qid, p in picks.items():
         q = questions[qid]
         for i in p["idx"]:
@@ -296,6 +315,7 @@ def summarize(questions: Mapping[str, Mapping], picks: Mapping[str, Mapping], k:
             judge_zero += q["llm"][i] is not None and q["llm"][i] <= 0.0
             wrong += not q["correct"][i]
             api_len += q["api_length"][i]
+            truncated += q["truncated"][i]
         weights.extend(p["weights"])
         if "vecs" in q and k > 1:
             divs.append(float(div_of_subsets(distance_matrix(q["vecs"]), np.array([p["idx"]]))[0]))
@@ -309,7 +329,7 @@ def summarize(questions: Mapping[str, Mapping], picks: Mapping[str, Mapping], k:
             "more_than_k": sum(len(questions[q]["tids"]) > k for q in picks),
             "teacher_share": _shares(teachers),
             "mean_tokens": statistics.mean(toks) if toks else None, "lengths_from_api": int(api_len),
-            "judge_zero_kept": int(judge_zero), "wrong_kept": int(wrong),
+            "judge_zero_kept": int(judge_zero), "wrong_kept": int(wrong), "truncated_kept": int(truncated),
             "ties": sum(bool(p["tie"]) for p in picks.values()),
             "mean_div": statistics.mean(divs) if divs else None,
             "mean_fit": statistics.mean(fits) if fits else None,
@@ -369,21 +389,21 @@ class Inputs:
             return self._questions[(pool, need)]
         if pool == "correct":
             chains = self.pool
-        elif pool == "all":
+        elif pool in EXTENDED_POOLS:
             from src.stage_a.a2_generate import all_trajectory_files
             paths = all_trajectory_files(self.workdir, self.cfg["stage_a_files"])
             if not paths:
-                raise SystemExit("Kho 'all' cần trajectories*.jsonl, máy này không có. Chạy trên máy giữ dữ liệu "
-                                 "gốc rồi chép file train sang (so md5 trong select.<tên>.json).")
+                raise SystemExit(f"Kho '{pool}' cần trajectories*.jsonl, máy này không có. Chạy trên máy giữ dữ "
+                                 f"liệu gốc rồi chép file train sang (so md5 trong select.<tên>.json).")
             chains, empty = all_chains_pool([t for p in paths for t in read_jsonl(p)], set(self.pool),
-                                            self.info["excluded_tids"])
+                                            self.info["excluded_tids"], complete_only=pool == "all_complete")
             if empty:
-                print(f"[b2] kho 'all': bỏ {empty} chuỗi rỗng")
+                print(f"[b2] kho '{pool}': bỏ {empty} chuỗi rỗng")
         else:
-            raise SystemExit(f"select.pool không hợp lệ: {pool!r} (correct, all)")
+            raise SystemExit(f"select.pool không hợp lệ: {pool!r} (correct, {', '.join(EXTENDED_POOLS)})")
         quality, fit, emb_row, vecs = self.quality, self.fit, self.emb_row, self.vecs
-        if pool == "all" and need:
-            quality, fit, emb_row, vecs = self.extended()
+        if pool in EXTENDED_POOLS and need:
+            quality, fit, emb_row, vecs = self.extended(pool)
             unjudged = {c["tid"] for v in chains.values() for c in v
                         if c["tid"] in quality and quality[c["tid"]].get("qual") is None}
             if unjudged:
@@ -393,20 +413,20 @@ class Inputs:
         self._questions[(pool, need)] = out
         return out
 
-    def extended(self) -> tuple[dict, dict, dict, np.ndarray]:
+    def extended(self, pool: str) -> tuple[dict, dict, dict, np.ndarray]:
         """Tín hiệu của kho mở rộng: Qual riêng của kho, fit và biểu diễn gộp phần chuỗi đúng với phần chuỗi sai."""
-        names = extended_files(self.cfg)
+        names = {**extended_files(self.cfg), "quality": extended_quality_file(pool)}
         absent = [names[k] for k in ("quality", "embeddings", "fit") if not (self.workdir / names[k]).exists()]
         if absent:
-            raise SystemExit(f"Kho 'all' với hàm mục tiêu cần tín hiệu của chuỗi sai chưa được chấm: thiếu "
+            raise SystemExit(f"Kho '{pool}' với hàm mục tiêu cần tín hiệu của chuỗi sai chưa được chấm: thiếu "
                              f"{', '.join(absent)}. Chạy src.tools.backfill_wrong (prepare, judge, embed, fit, "
                              f"combine) trước.")
         quality = {r["tid"]: r for r in read_jsonl(self.workdir / names["quality"])}
-        stale = [t for t, r in self.quality.items()
-                 if t in quality and r.get("llm_score") != quality[t].get("llm_score")]
+        stale = [t for t, r in self.quality.items() if t in quality and (
+            r.get("llm_score") != quality[t].get("llm_score") or r.get("rule_score") != quality[t].get("rule_score"))]
         if stale:
-            raise SystemExit(f"{names['quality']} lệch điểm giám khảo với quality.jsonl ở {len(stale)} chuỗi (ví dụ "
-                             f"{stale[:3]}): file cũ, chạy lại backfill_wrong --step combine.")
+            raise SystemExit(f"{names['quality']} lệch điểm giám khảo hoặc điểm quy tắc với quality.jsonl ở "
+                             f"{len(stale)} chuỗi (ví dụ {stale[:3]}): file cũ, chạy lại backfill_wrong --step combine.")
         wrong_fit = read_jsonl(self.workdir / names["fit"])
         if not wrong_fit:
             raise SystemExit(f"{names['fit']} rỗng.")
@@ -447,7 +467,7 @@ def print_summary(s: Mapping) -> None:
     line = (f"[b2] {s['tag']:<26} {s['questions']} câu, {s['samples']} mẫu | {s['mean_tokens']:.0f} token | "
             f"{share} | phá hoà {s['ties']} câu")
     if s["wrong_kept"]:
-        line += f" | chuỗi sai {s['wrong_kept']}"
+        line += f" | chuỗi sai {s['wrong_kept']} (trong đó bị cắt {s['truncated_kept']})"
     if s["lengths_from_api"]:
         line += f" | {s['lengths_from_api']} chuỗi đo độ dài bằng token của API"
     if s["greedy_same"] is not None:
@@ -499,8 +519,9 @@ def report(outdir: Path, versus: Path | None = None) -> int:
           + f" | {pool['mean_tokens']:.0f} | | {pool['judge_zero']} | 0 | |")
     for s in summaries:
         div = f"{s['mean_div']:.3f}" if s["mean_div"] is not None else ""
+        wrong = f"{s['wrong_kept']}" + (f" (bị cắt {s['truncated_kept']})" if s.get("truncated_kept") else "")
         print(f"| {s['tag']} | " + " | ".join(f"{s['teacher_share'].get(t, 0):.1%}" for t in teachers)
-              + f" | {s['mean_tokens']:.0f} | {div} | {s['judge_zero_kept']} | {s['wrong_kept']} | {s['ties']} |")
+              + f" | {s['mean_tokens']:.0f} | {div} | {s['judge_zero_kept']} | {wrong} | {s['ties']} |")
 
     sets = {s["tag"]: _tid_sets(outdir / s["train_file"]) for s in summaries}
     tags = list(sets)

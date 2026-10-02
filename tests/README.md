@@ -52,6 +52,9 @@ python -m pytest tests/stage_a -q  # chỉ một nhóm
   giám khảo thô giữ nguyên; chuỗi sai giám khảo không chấm được chỉ bị loại khỏi kho mở rộng; No-Filter không
   đổi sau khi chấm bù. `test_b2_select.py` thêm bài chạy hai tiến trình với `PYTHONHASHSEED` khác nhau và so
   md5 của mọi file train (thứ tự cố định dùng `hashlib`, không dùng `hash()`).
+  Sửa 02/10 sau khi đo trên dữ liệu thật: điểm quy tắc của chuỗi sai chấm trên thang của kho gốc
+  (`rule_scores_with_reference`), nên câu không có chuỗi sai giữ nguyên Qual và tập chọn; thêm kho
+  `all_complete` (bỏ chuỗi bị cắt) và bộ đếm chuỗi bị cắt trong tóm tắt của `b2_select`.
 
 ## tools/
 

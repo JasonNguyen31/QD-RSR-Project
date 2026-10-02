@@ -139,7 +139,8 @@ def test_every_config_file_declares_a_valid_rule():
     names = set()
     for m, a in todo:
         cfg = load_config(method=m, ablation=a, student="qwen1_5b")
-        assert cfg.select.rule in ("random", "topk", "objective") and cfg.select.pool in ("correct", "all")
+        assert cfg.select.rule in ("random", "topk", "objective")
+        assert cfg.select.pool in ("correct",) + b2.EXTENDED_POOLS
         assert cfg.select.name == (a or m)                    # tên file train khớp tên file cấu hình
         names.add(b2.selection_tag(cfg))
     assert len(names) == 14

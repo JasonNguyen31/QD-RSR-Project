@@ -70,6 +70,37 @@ def zscore(values: Sequence[float]) -> list[float]:
     return [(v - mean) / sd for v in values]
 
 
+def rule_scores_with_reference(
+    texts: Sequence[str],
+    reference_texts: Sequence[str],
+    weights: Mapping[str, float] = DEFAULT_WEIGHTS,
+    keywords: Mapping[str, Sequence[str]] = DEFAULT_KEYWORDS,
+) -> tuple[list[float], list[dict[str, float]]]:
+    """Chấm texts trên thang của một tập tham chiếu: trung bình và độ lệch chuẩn của từng tiêu chí lấy từ
+    reference_texts, không lấy từ texts.
+
+    Dùng khi chấm thêm chuỗi ngoài kho gốc (chuỗi sai của kho mở rộng). Chấm cả kho mở rộng bằng rule_scores
+    sẽ đổi trung bình và độ lệch chuẩn, tức đổi điểm của MỌI chuỗi đúng, kể cả ở những câu hỏi không có chuỗi
+    sai nào. Với hàm này, chuỗi nào thuộc tập tham chiếu thì nhận đúng điểm mà rule_scores(reference_texts)
+    cho nó (giống tới từng bit, vì dùng cùng công thức và cùng thứ tự cộng).
+    """
+    if abs(sum(weights.values()) - 1.0) > 1e-9:
+        raise ValueError(f"Tổng trọng số phải bằng 1, hiện là {sum(weights.values())}")
+    if not reference_texts:
+        raise ValueError("tập tham chiếu rỗng")
+    ref = [raw_features(t, keywords) for t in reference_texts]
+    stats = {}
+    for name in weights:
+        vals = [f[name] for f in ref]
+        mean = sum(vals) / len(vals)
+        sd = math.sqrt(sum((v - mean) ** 2 for v in vals) / len(vals))
+        stats[name] = (mean, sd)
+    feats = [raw_features(t, keywords) for t in texts]
+    scores = [sum(weights[name] * ((f[name] - stats[name][0]) / stats[name][1] if stats[name][1] else 0.0)
+                  for name in weights) for f in feats]
+    return scores, feats
+
+
 def rule_scores(
     texts: Sequence[str],
     weights: Mapping[str, float] = DEFAULT_WEIGHTS,
