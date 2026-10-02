@@ -3,11 +3,14 @@
     python -m src.tools.check_vram                        # Qwen2.5-1.5B, cả hai phép đo
     python -m src.tools.check_vram --model Qwen/Qwen2.5-7B-Instruct --skip-train
     python -m src.tools.check_vram --seq 3072 --batch 1 2 4
+    python -m src.tools.check_vram --model Qwen/Qwen2.5-1.5B --no-quant --loss chunked --skip-forward --batch 1 2 4
 
 Hai phép đo, tương ứng hai bước dùng GPU:
   1. **Đọc chuỗi ở 16-bit** (b1_fit): chỉ forward, không gradient. Cần cho RSR, GRAPE, LocalNat, LARK.
      Dùng 16-bit chứ không lượng tử 4-bit, vì lượng tử làm nhiễu thứ hạng token mà RSR dựa vào.
   2. **Một bước huấn luyện QLoRA 4-bit** (b3_train): có gradient và trạng thái bộ tối ưu, tốn nhất.
+     Thêm --no-quant để đo LoRA trên trọng số 16-bit KHÔNG lượng tử (quyết định 02/10 cho mô hình 1,5 tỷ:
+     chấm tín hiệu và huấn luyện ở cùng một độ chính xác; chỉ áp dụng nếu phép đo này vừa bộ nhớ).
 
 Nguyên tắc đã chốt: không để chiếm quá 10GB dù card có 12GB. Chạy sát trần dễ đổ giữa chừng.
 Công cụ dùng dữ liệu giả, không cần candidates.jsonl, nên chạy được ngay.
@@ -83,8 +86,12 @@ def chunked_loss(model, ids, chunk: int = 256):
 
 
 def measure_train_step(model_id: str, seq: int, batch: int, grad_ckpt: bool, upcast: bool = True,
-                       loss_mode: str = "default", diag: bool = False) -> dict:
+                       loss_mode: str = "default", diag: bool = False, quant: bool = True) -> dict:
     """Bước b3: một bước huấn luyện QLoRA 4-bit, gồm forward, backward và cập nhật tham số.
+
+    quant=False đo LoRA trên trọng số 16-bit (bfloat16) không lượng tử. Khi đó KHÔNG gọi
+    prepare_model_for_kbit_training (hàm đó nâng cả mô hình lên 32-bit, gấp đôi bộ nhớ trọng số) và tham số
+    upcast không có tác dụng; get_peft_model tự đóng băng trọng số gốc.
 
     upcast=False giữ lớp đầu ra ở 16-bit thay vì để prepare_model_for_kbit_training nâng lên 32-bit.
     Lớp đầu ra của Qwen2.5-1.5B có 152k x 1536 tham số, và ma trận logit là 152k cho MỖI vị trí chuỗi,
@@ -95,12 +102,16 @@ def measure_train_step(model_id: str, seq: int, batch: int, grad_ckpt: bool, upc
     from transformers import AutoModelForCausalLM, BitsAndBytesConfig
 
     reset(torch)
-    quant = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
-                               bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True)
-    model = AutoModelForCausalLM.from_pretrained(model_id, quantization_config=quant, device_map="cuda",
-                                                 attn_implementation="sdpa", dtype=torch.bfloat16)
-    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=grad_ckpt)
-    if not upcast:
+    if quant:
+        qcfg = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                                  bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True)
+        model = AutoModelForCausalLM.from_pretrained(model_id, quantization_config=qcfg, device_map="cuda",
+                                                     attn_implementation="sdpa", dtype=torch.bfloat16)
+        model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=grad_ckpt)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(model_id, device_map="cuda", attn_implementation="sdpa",
+                                                     dtype=torch.bfloat16)
+    if quant and not upcast:
         # Phải hạ TOÀN BỘ tham số 32-bit xuống 16-bit, không chỉ lớp đầu ra: prepare_model_for_kbit_training
         # nâng cả các lớp chuẩn hoá, nên nếu chỉ hạ lớp đầu ra thì đầu vào 32-bit gặp trọng số 16-bit và
         # báo lỗi "expected mat1 and mat2 to have the same dtype".
@@ -129,9 +140,11 @@ def measure_train_step(model_id: str, seq: int, batch: int, grad_ckpt: bool, upc
                            if "norm" in n.lower() and hasattr(m, "weight")), None)
         hid_dtype = next((m.weight.dtype for n, m in inner.named_modules()
                           if n.endswith("embed_tokens") and hasattr(m, "weight")), None)
+        lora_dtype = next((prm.dtype for n, prm in model.named_parameters() if "lora_" in n), None)
         print(f"   [chẩn đoán] gradient checkpointing: {on} | attention: "
               f"{getattr(base.config, '_attn_implementation', '?')} | kiểu lớp chuẩn hoá: {norm_dtype} "
-              f"| kiểu lớp nhúng: {hid_dtype}")
+              f"| kiểu lớp nhúng: {hid_dtype} | kiểu tham số LoRA: {lora_dtype} "
+              f"| lượng tử: {'4-bit' if quant else 'không'}")
 
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-4)
     ids = torch.randint(0, model.config.vocab_size, (batch, seq), device="cuda")
@@ -179,6 +192,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="hạ mọi tham số 32-bit xuống 16-bit sau prepare_model_for_kbit_training")
     ap.add_argument("--loss", choices=["default", "chunked"], default="default",
                     help="cách tính hàm mất mát khi đo bước huấn luyện")
+    ap.add_argument("--no-quant", action="store_true",
+                    help="đo LoRA trên trọng số 16-bit không lượng tử thay cho QLoRA 4-bit")
     args = ap.parse_args(argv)
 
     import torch
@@ -188,13 +203,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"[bộ nhớ] {torch.cuda.get_device_name(0)}, tổng {total:.1f} GB, trần tự đặt {LIMIT_GB} GB")
     print(f"[bộ nhớ] {args.model}, độ dài chuỗi {args.seq}\n")
     if not args.sweep:
-        print(f"cấu hình huấn luyện: {'16-bit' if args.no_upcast else '32-bit'}, "
-              f"mất mát {'theo đoạn' if args.loss == 'chunked' else 'thường'}\n")
+        kind = "LoRA 16-bit không lượng tử" if args.no_quant else \
+            f"QLoRA 4-bit, lớp không lượng tử ở {'16-bit' if args.no_upcast else '32-bit'}"
+        print(f"cấu hình huấn luyện: {kind}, mất mát {'theo đoạn' if args.loss == 'chunked' else 'thường'}\n")
     print(f"{'phép đo':<30}{'lô':>4}{'đỉnh':>9}{'giây/bước':>12}{'token/giây':>13}{'kết luận':>17}")
 
     if args.sweep:
         combos = [("32-bit + thường", True, "default"), ("32-bit + đoạn", True, "chunked"),
                   ("16-bit + thường", False, "default"), ("16-bit + đoạn", False, "chunked")]
+        if args.no_quant:
+            combos = [("LoRA 16-bit + thường", True, "default"), ("LoRA 16-bit + đoạn", True, "chunked")]
         print(f"\n{'độ dài':<9}" + "".join(f"{c[0]:>20}" for c in combos))
         first = True
         for sq in args.sweep:
@@ -202,7 +220,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             for _, upcast, mode in combos:
                 try:
                     r = measure_train_step(args.model, sq, 1, not args.no_grad_ckpt,
-                                           upcast=upcast, loss_mode=mode, diag=first)
+                                           upcast=upcast, loss_mode=mode, diag=first, quant=not args.no_quant)
                     first = False
                     cells.append(f"{r['peak']:.2f}G")
                 except torch.cuda.OutOfMemoryError:
@@ -219,6 +237,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     rows = []
+    train_name = "b3: một bước LoRA 16-bit" if args.no_quant else "b3: một bước QLoRA 4-bit"
     for b in args.batch:
         if not args.skip_forward:
             try:
@@ -230,10 +249,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             try:
                 r = measure_train_step(args.model, args.seq, b, not args.no_grad_ckpt,
                                         upcast=not args.no_upcast, loss_mode=args.loss,
-                                        diag=(b == args.batch[0]))
-                rows.append(("b3: một bước QLoRA 4-bit", b, r))
+                                        diag=(b == args.batch[0]), quant=not args.no_quant)
+                rows.append((train_name, b, r))
             except torch.cuda.OutOfMemoryError:
-                rows.append(("b3: một bước QLoRA 4-bit", b, None))
+                rows.append((train_name, b, None))
 
     for name, b, r in rows:
         if r is None:
