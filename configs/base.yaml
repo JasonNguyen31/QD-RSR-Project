@@ -89,6 +89,8 @@ signal_direction:
 
 # ---------------------------------------------------------------- Huấn luyện (Giai đoạn B, bước b3)
 training:
+  # Mặc định là QLoRA 4-bit, dùng cho mô hình 7 tỷ. Mô hình 1,5 tỷ đè thành LoRA 16-bit không lượng tử trong
+  # configs/student/qwen1_5b.yaml (chốt 02/10): mỗi mô hình học huấn luyện ở đúng độ chính xác mà b1 đã chấm nó.
   method: qlora
   load_in_4bit: true
   lora_r: 16

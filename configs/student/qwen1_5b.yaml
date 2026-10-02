@@ -6,6 +6,16 @@ student:
   base_model_id: Qwen/Qwen2.5-1.5B        # dùng khi chạy với cờ --base
   params_b: 1.5
 
+# Chốt 02/10: mô hình này huấn luyện bằng LoRA trên trọng số 16-bit (bfloat16), KHÔNG lượng tử, để được chấm
+# tín hiệu (b1_fit chạy ở 16-bit, kể cả phần chấm bù chuỗi sai) và huấn luyện ở cùng một độ chính xác. Riêng
+# lượng tử 4-bit đã làm đổi tập top-3 của RSR ở 29,8% số câu. Mô hình 7 tỷ giữ QLoRA 4-bit của base.yaml, vì
+# b1 của nó cũng chạy ở 4-bit. b3_train KHÔNG được gọi prepare_model_for_kbit_training cho mô hình này (hàm đó
+# nâng cả mô hình lên 32-bit); tham số LoRA để ở 32-bit như PEFT mặc định.
 training:
-  batch_size: 4                # đo được 5,06GB ở chuỗi dài nhất 3.072; lô 8 chạm 8,83GB và tụt tốc độ
-  grad_accum: 4                # lô hiệu dụng 16, giữ giống mô hình 7 tỷ để so được hai quy mô
+  method: lora
+  load_in_4bit: false
+  # Đo 02/10 bằng check_vram --no-quant --loss chunked, chuỗi 3.072 token, có gradient checkpointing:
+  #   lô 1: 4,05GB, 1.118 token/giây;  lô 2: 5,00GB, 1.134 token/giây;
+  #   lô 4: 6,90GB nhưng tụt còn 246 token/giây (49,85 giây mỗi bước), nên không dùng.
+  batch_size: 2
+  grad_accum: 8                # lô hiệu dụng 16, bằng mô hình 7 tỷ

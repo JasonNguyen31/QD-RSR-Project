@@ -19,6 +19,18 @@ def test_main_student_unchanged():
     assert cfg.signals.skip_local_nat is False
 
 
+def test_each_student_trains_at_the_precision_it_was_scored_at():
+    """Chốt 02/10: 1,5B chấm ở 16-bit nên huấn luyện LoRA 16-bit; 7B chấm ở 4-bit nên giữ QLoRA 4-bit.
+    Ghi cứng có chủ đích: đổi cấu hình mà không đổi quyết định thì bài này phải hỏng."""
+    small, big = load_config(student="qwen1_5b").training, load_config(student="qwen7b").training
+    assert small.method == "lora" and small.load_in_4bit is False
+    assert big.method == "qlora" and big.load_in_4bit is True
+    assert small.batch_size * small.grad_accum == big.batch_size * big.grad_accum == 16
+    assert small.batch_size == 2                # lô 4 đo được 246 token/giây so với 1.134 ở lô 2
+    for t in (small, big):                      # phần còn lại của cấu hình LoRA giống nhau ở hai mô hình
+        assert (t.lora_r, t.lora_alpha, t.lora_dropout, t.max_seq_len) == (16, 32, 0.05, 3072)
+
+
 def test_selection_seed_does_not_depend_on_student():
     """Correct-Only phải chọn đúng cùng một tập ở cả hai mô hình học."""
     assert (load_config(student="qwen1_5b").selection.random_seed

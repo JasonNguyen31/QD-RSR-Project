@@ -159,8 +159,10 @@ def build_pipeline() -> str:
     # sau lọc đáp án, trừ 4 câu tụt dưới 3 ứng viên khi bỏ 75 chuỗi không có điểm giám khảo, còn
     # 1.895 câu × 3 = 5.685. Ô thứ ba của Stage A là 18.000 chuỗi SINH RA, chưa lọc; paper chỉ gọi
     # "candidates" cho 15.010 chuỗi đúng, nên ô này ghi "trajectories" để hai chỗ không lệch nhau.
+    # Ô cuối ghi "LoRA" chứ không ghi "QLoRA" (chốt 02/10): mô hình 1,5 tỷ dùng LoRA 16-bit không lượng tử, chỉ
+    # mô hình 7 tỷ dùng QLoRA 4-bit; phần Thiết lập thực nghiệm của paper nêu rõ từng mô hình.
     for cx, (a, b) in zip(BX, [("Fit(t, m)", "once per student"), ("exact search", "max F(S, m)"),
-                               ("5,685 samples", "k = 3 per question"), ("QLoRA", "fine-tuning")]):
+                               ("5,685 samples", "k = 3 per question"), ("LoRA", "fine-tuning")]):
         box(cx, BY, BW, BH, PUR_BG, PUR, PUR_TX, a, b)
     chain(BX, BY + BH / 2, BW)
 

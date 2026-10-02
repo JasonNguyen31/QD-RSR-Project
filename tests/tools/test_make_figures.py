@@ -15,9 +15,10 @@ def _stats(**groups):
 def test_pipeline_is_valid_svg_with_all_boxes():
     svg = mf.build_pipeline()
     ET.fromstring(svg)                                   # cú pháp XML hợp lệ
-    for word in ("Stage A:", "Stage B:", "Stage C:", "Fit(t, m)", "exact search", "5,685 samples", "QLoRA",
+    for word in ("Stage A:", "Stage B:", "Stage C:", "Fit(t, m)", "exact search", "5,685 samples", ">LoRA<",
                  "next method", "next student", "filtered candidates", "cached Qual(t)"):
         assert word in svg, word
+    assert "QLoRA" not in svg        # 1,5B dùng LoRA 16-bit, chỉ 7B dùng QLoRA (chốt 02/10); xem phần Thiết lập
 
 
 def test_distribution_uses_shares_not_counts():
