@@ -5,7 +5,7 @@
     python -m src.tools.make_figures distribution --stats data/stage_a/stats.json
     python -m src.tools.make_figures all
 
-Chạy từ gốc repo. Hình xuất ra docs/figures/ dạng PDF (vector, dùng cho Overleaf) và PNG (xem nhanh).
+Chạy từ gốc repo. Hình xuất ra outputs/figures/ dạng PDF (vector, dùng cho Overleaf) và PNG (xem nhanh).
 Không để lại file SVG trung gian.
 
     Hình 1  pipeline      Pipeline ba giai đoạn, đường nối chỉ rõ ô nào sang ô nào
@@ -523,7 +523,7 @@ REPORT = ["teachers", "truncation", "lengths", "judge", "distance", "correlation
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("figure", choices=list(FIGURES) + ["all", "report"])
-    ap.add_argument("--outdir", default="docs/figures")
+    ap.add_argument("--outdir", default="outputs/figures")
     ap.add_argument("--stats", default="data/stage_a/stats.json", help="stats.json cho Hình 2")
     ap.add_argument("--workdir", default="data/stage_a", help="thư mục dữ liệu cho các hình báo cáo")
     ap.add_argument("--fit", default="fit.qwen1_5b_base.jsonl", help="file điểm b1 cho hình tương quan")

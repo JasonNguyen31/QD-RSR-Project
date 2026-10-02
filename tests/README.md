@@ -55,6 +55,12 @@ python -m pytest tests/stage_a -q  # chỉ một nhóm
   Sửa 02/10 sau khi đo trên dữ liệu thật: điểm quy tắc của chuỗi sai chấm trên thang của kho gốc
   (`rule_scores_with_reference`), nên câu không có chuỗi sai giữ nguyên Qual và tập chọn; thêm kho
   `all_complete` (bỏ chuỗi bị cắt) và bộ đếm chuỗi bị cắt trong tóm tắt của `b2_select`.
+- **stage_b/test_b3_train.py** (thêm 02/10) — phần không cần torch của `b3_train`: token kết thúc lượt lấy từ
+  khuôn hội thoại; mẫu là đề, chuỗi, rồi token kết thúc lượt, mất mát chỉ tính trên chuỗi; mẫu bị cắt không gắn
+  token kết thúc lượt; mỗi mẫu xuất hiện đúng một lần mỗi epoch; xếp theo độ dài không đổi thành phần của lô hiệu
+  dụng; tốc độ học theo cosine có khởi động; từ chối tập chọn sai md5, bị khoá, sai k hoặc của mô hình học khác.
+  Phần toán của mất mát (tích luỹ gradient bằng đúng một lô lớn, trọng số mẫu) cần torch nên nằm trong
+  `python -m src.stage_b.b3_train --selftest`, chạy trên máy có torch.
 
 ## tools/
 

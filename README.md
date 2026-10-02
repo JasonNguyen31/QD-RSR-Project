@@ -56,7 +56,7 @@ src/
 
 tests/            101 bài, offline — xem tests/README.md
 data/             không nằm trong git — xem data/README.md
-outputs/          mô hình, kết quả, nhật ký, hình
+outputs/          mô hình, kết quả, nhật ký (không đưa vào git); figures/ và qdrsr_srctree.html (có đưa vào git)
 ```
 
 ## Phân công hai máy

@@ -109,6 +109,11 @@ training:
   grad_accum: 8
   gradient_checkpointing: true
   bf16: true
+  weight_decay: 0.0             # như mặc định của transformers; chỉ tham số LoRA được cập nhật
+  max_grad_norm: 1.0            # cắt chuẩn gradient của cả lô hiệu dụng, như mặc định của transformers
+  loss_chunk: 256               # số vị trí mỗi đoạn khi tính lớp đầu ra và mất mát (đã đo bằng check_vram)
+  save_every_steps: 100         # cứ bấy nhiêu bước tối ưu thì ghi một điểm lưu để chạy tiếp khi đứt
+  stop_check_samples: 16        # số đề bài sinh thử sau huấn luyện để đo tỷ lệ dừng ở token kết thúc lượt
 
 hardware:
   vram_budget_gb: 10            # không chạy sát trần 12GB (Notion mục B8)

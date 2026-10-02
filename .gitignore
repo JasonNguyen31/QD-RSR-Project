@@ -1,13 +1,17 @@
 .env
 .venv/
 data/
-outputs/
+# outputs/ chứa cả thứ sinh ra khi chạy (mô hình, kết quả, nhật ký: không đưa vào git) lẫn hình của báo cáo và
+# sơ đồ cây mã nguồn (có đưa vào git). Bỏ qua mọi thứ trong outputs/ trừ hai thứ sau.
+outputs/*
+!outputs/figures/
+!outputs/qdrsr_srctree.html
+outputs/figures/*.svg
 models/
 __pycache__/
 *.pyc
 *.log
 .DS_Store
-unsloth_compiled_cache/docs/figures/*.svg
 
 # file nen tam thoi va cache sinh tu dong
 *.tar.xz
