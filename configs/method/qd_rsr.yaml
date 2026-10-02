@@ -1,0 +1,7 @@
+# QD-RSR: duyệt hết mọi tập con cỡ k, lấy tập tối đa hoá F(S) = Σ Fit^a·Qual^b + λ·Div(S).
+# a, b, lambda_div, div_scale lấy từ selection trong base.yaml. Các biến thể trong configs/ablation đè lên file
+# này: b2_select --ablation <tên>.
+select:
+  name: qd_rsr
+  pool: correct
+  rule: objective

@@ -1,0 +1,7 @@
+# Quality-only: tắt Fit và Div, tức k chuỗi có Qual cao nhất. Tái lập XU HƯỚNG của bài RSR (chất lượng đơn lẻ
+# thua RSR), không phải con số của họ.
+select:
+  name: quality_only
+selection:
+  a: 0.0
+  lambda_div: 0.0

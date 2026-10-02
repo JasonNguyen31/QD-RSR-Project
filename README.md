@@ -27,7 +27,7 @@ a3_filter   →  candidates.jsonl           chuỗi đúng, câu đủ k
 a4_score    →  quality.jsonl              Qual(t)
 a5_embed    →  embeddings.npz             embed(t)
 b1_fit      →  fit.jsonl                  RSR, GRAPE, LocalNat, LARK (một lượt logits)
-b2_select   →  selected.jsonl             6.000 mẫu mỗi phương án
+b2_select   →  stage_b/<student>_base/    train.<tên>.jsonl, k chuỗi mỗi câu cho từng phương án
 b3_train    →  LoRA adapter
 c1_evaluate →  results/                   Acc@4 (trung bình 4 lượt) và Pass@4 trên sáu benchmark
 c2_deploy   →  GGUF + chỉ số triển khai

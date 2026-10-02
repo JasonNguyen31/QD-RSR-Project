@@ -1,0 +1,6 @@
+# Fit + Diversity: tắt Qual. λ lấy theo selection.lambda_div của base.yaml, tức λ đã chọn cho phương án chính;
+# chỉ chọn và huấn luyện biến thể này SAU khi đã chốt λ.
+select:
+  name: fit_diversity
+selection:
+  b: 0.0

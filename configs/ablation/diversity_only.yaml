@@ -1,0 +1,8 @@
+# Diversity-only: tắt Fit và Qual, tức tập có Div lớn nhất. Với a = b = 0 thì phần Σ là hằng số, mọi λ > 0 cho
+# cùng một tập; λ ghim ở 1 để biến thể này không suy biến khi λ chọn được ở phương án chính là 0.
+select:
+  name: diversity_only
+selection:
+  a: 0.0
+  b: 0.0
+  lambda_div: 1.0

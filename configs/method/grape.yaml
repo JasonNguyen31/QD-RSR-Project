@@ -1,0 +1,6 @@
+# GRAPE (Zhang 2025): k chuỗi có log xác suất trung bình từng token CAO nhất. Đại diện họ tín hiệu "tự nhiên".
+select:
+  name: grape
+  pool: correct
+  rule: topk
+  signal: grape

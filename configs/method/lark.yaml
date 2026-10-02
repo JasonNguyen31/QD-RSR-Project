@@ -1,0 +1,8 @@
+# LARK (Yu 2026): k chuỗi có ĝ cao nhất, ĝ tính trên các ứng viên dùng được của cùng câu hỏi.
+# Trọng số mềm theo Bổ đề 3 (signals.lark_weights); câu chỉ có đúng k ứng viên nhận trọng số đều (chốt 29/09).
+select:
+  name: lark
+  pool: correct
+  rule: topk
+  signal: lark
+  weights: lark_soft

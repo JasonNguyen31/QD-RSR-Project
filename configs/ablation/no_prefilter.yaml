@@ -1,0 +1,7 @@
+# Không lọc sơ bộ: hàm mục tiêu QD-RSR trên mọi chuỗi của câu hỏi, kể cả chuỗi sai và chuỗi bị cắt.
+# Giữ biến thể này (quyết định 02/10). Cần kho mở rộng do src/tools/backfill_wrong tạo: quality.all.jsonl,
+# embeddings.wrong.npz, fit.<student>_base.wrong.jsonl. Qual, Fit và ĝ đều tính lại trên nhóm mở rộng của từng
+# câu, nên khác giá trị của kho chuỗi đúng. Chưa có ba file đó thì b2_select dừng, không âm thầm bỏ chuỗi sai.
+select:
+  name: no_prefilter
+  pool: all

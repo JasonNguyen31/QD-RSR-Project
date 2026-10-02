@@ -1,0 +1,5 @@
+# Fit + Quality: tắt Div. Trùng QD-RSR ở λ = 0, nên cũng là điểm λ = 0 của lưới chọn λ.
+select:
+  name: fit_quality
+selection:
+  lambda_div: 0.0

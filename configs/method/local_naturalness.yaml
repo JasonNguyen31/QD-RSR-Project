@@ -1,0 +1,12 @@
+# Local Naturalness (Just 2025, phương trình 2). Quyết định 02/10: làm ĐÚNG bài gốc, cắt bước bằng GLM-4.5-Air
+# (tắt chế độ suy nghĩ), làm sau và song song với huấn luyện, bắt đầu bằng lô thử 200 chuỗi.
+# Cột local_nat hiện có trong file fit là bản xấp xỉ cắt bước theo dấu câu: chỉ dùng để phân tích.
+# Khoá blocked chặn việc sinh file huấn luyện từ bản xấp xỉ; b2_select --allow-blocked vẫn cho tập chọn mang
+# đuôi .tam để dựng bảng I.9. Khi có cột tín hiệu đúng bài gốc: đổi signal sang cột đó và xoá khoá blocked.
+# File fit của mô hình 7 tỷ không có cột local_nat nên phương án này chỉ chạy với mô hình 1,5 tỷ.
+select:
+  name: local_naturalness
+  pool: correct
+  rule: topk
+  signal: local_nat
+  blocked: "cột local_nat là bản xấp xỉ theo dấu câu, chưa phải bản cắt bước bằng GLM-4.5-Air của bài gốc."

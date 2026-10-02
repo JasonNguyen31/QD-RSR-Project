@@ -1,0 +1,7 @@
+# Correct-Only: rút ngẫu nhiên k chuỗi trong các chuỗi đúng. Mốc của câu hỏi nghiên cứu.
+# Thứ tự rút chỉ phụ thuộc selection.random_seed và tid, nên tập chọn giống hệt ở ba seed huấn luyện và ở cả
+# hai mô hình học (chốt 30/09).
+select:
+  name: correct_only
+  pool: correct
+  rule: random

@@ -1,0 +1,7 @@
+# No-Filter: rút ngẫu nhiên k chuỗi từ MỌI chuỗi của câu hỏi, kể cả chuỗi sai và chuỗi bị cắt. Cận dưới.
+# Tập câu hỏi vẫn là tập chung của mọi phương án; chuỗi thiếu Qual và chuỗi rỗng vẫn bị loại.
+# Cần trajectories*.jsonl nên chỉ chạy được trên máy giữ dữ liệu gốc.
+select:
+  name: no_filter
+  pool: all
+  rule: random

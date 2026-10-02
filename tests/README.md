@@ -39,6 +39,20 @@ python -m pytest tests/stage_a -q  # chỉ một nhóm
   lượt đúng; cài đặt đánh giá khớp A.4 và độ dài sinh bằng độ dài huấn luyện. Các bài này cố ý ghi cứng
   giá trị đã chốt: sửa cấu hình mà không sửa quyết định thì bài phải hỏng.
 
+- **stage_b/test_b2_select.py** (thêm 02/10) — dữ liệu giả dựng qua `a4.combine` và `b1_fit.aggregate` để
+  đúng tên khoá của file thật. Giữ các lời hứa của bảng phương án: RSR lấy giá trị THẤP nhất còn mọi tín hiệu
+  khác lấy cao nhất; Fit-only chọn đúng cùng tập với RSR; hàm mục tiêu trả nghiệm tối ưu so với cách tính tay
+  trên mọi tập con; chuỗi thiếu Qual bị loại ở mọi phương án và ĝ của LARK tính lại trên kho còn lại;
+  Correct-Only không đổi khi đổi mô hình học; mọi phương án ra cùng tập câu hỏi, đúng k chuỗi mỗi câu;
+  biến thể không lọc sơ bộ dừng chứ không âm thầm trở thành QD-RSR.
+- **stage_b/test_backfill_wrong.py** (thêm 02/10) — công cụ chấm bù chuỗi sai cho biến thể không lọc sơ bộ.
+  Giám khảo, bộ mã hoá và `b1_fit` được thay bằng bản giả; phần ghép Qual dùng đúng `a4.combine`. Giữ các điều
+  sau: chấm bù không đụng tới `quality.jsonl`, `judge.jsonl`, `embeddings.npz` và file fit hiện có; bước giám
+  khảo không chạy khi thiếu `--max-cost`; Qual của kho mở rộng được chuẩn hoá lại trên nhóm lớn hơn còn điểm
+  giám khảo thô giữ nguyên; chuỗi sai giám khảo không chấm được chỉ bị loại khỏi kho mở rộng; No-Filter không
+  đổi sau khi chấm bù. `test_b2_select.py` thêm bài chạy hai tiến trình với `PYTHONHASHSEED` khác nhau và so
+  md5 của mọi file train (thứ tự cố định dùng `hashlib`, không dùng `hash()`).
+
 ## tools/
 
 - **test_api_tool.py** — đếm đúng số mô hình lỗi, cảnh báo khi không có `\boxed`.

@@ -1,0 +1,7 @@
+# RSR (Yang 2026): k chuỗi có tỷ số thứ hạng trên độ bất ngờ THẤP nhất. Mốc so sánh trực tiếp của QD-RSR.
+# Chiều tối ưu lấy từ signal_direction trong base.yaml: rsr là min, tín hiệu duy nhất cực tiểu.
+select:
+  name: rsr
+  pool: correct
+  rule: topk
+  signal: rsr

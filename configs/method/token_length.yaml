@@ -1,0 +1,7 @@
+# Token-Length: k chuỗi dài nhất, đếm bằng token của mô hình học (cột n_tokens của file fit).
+# Đối chứng để loại cách giải thích "thắng vì chọn chuỗi dài": Qual nghiêng về chuỗi dài (+0,26 trong cùng câu).
+select:
+  name: token_length
+  pool: correct
+  rule: topk
+  signal: token_length

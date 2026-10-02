@@ -1,0 +1,7 @@
+# Fit-only: tắt Qual và Div. Phải chọn đúng cùng tập với phương án RSR (bài kiểm thử giữ điều này), nên
+# không cần huấn luyện riêng.
+select:
+  name: fit_only
+selection:
+  b: 0.0
+  lambda_div: 0.0
