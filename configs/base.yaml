@@ -17,6 +17,7 @@ paths:
   data_stage_a: data/stage_a
   data_stage_b: data/stage_b
   data_rsr_ref: data/rsr_ref
+  data_eval: data/eval           # sáu bộ đánh giá đã chuẩn hoá (c0_prepare_eval), không nằm trong git
   out_models: outputs/models
   out_results: outputs/results
   out_logs: outputs/logs
@@ -128,7 +129,7 @@ hardware:
 # ---------------------------------------------------------------- Đánh giá (Giai đoạn C)
 # ĐÃ CHỐT 30/09 theo Phụ lục A.4 bài RSR (đối chiếu cả v1 và v5, hai bản giống nhau).
 eval:
-  benchmarks: [gsm8k, math500, amc, aime24, aime25, bbh]
+  benchmarks: [gsm8k, math500, amc23, aime24, aime25, bbh]   # tên bộ như trong data.yaml mục eval_data
   n_samples: 4                  # 4 lượt sinh độc lập mỗi câu; mọi chỉ số tính từ đúng 4 lượt này
   # acc@4  = TRUNG BÌNH tỷ lệ đúng của 4 lượt (định nghĩa của bài RSR, A.4). Chỉ số chính.
   # pass@4 = đúng nếu có ít nhất một trong 4 lượt đúng. Phép thử riêng cho thành phần đa dạng.

@@ -41,3 +41,37 @@ stage_a_files:
   candidates: candidates.jsonl
   kept_qids: kept_qids.json
   stats: stats.json
+
+# ---------------------------------------------------------------- dữ liệu đánh giá (c0_prepare_eval)
+# Nguồn của sáu bộ đánh giá, chốt 03/10/2026. Bài RSR (A.4) không công bố nguồn dữ liệu đánh giá, nên nhóm
+# chọn các bản đóng gói phổ biến và ghim lại: nguồn GitHub ghim theo commit và md5, nguồn Hugging Face được
+# ghi commit vào data/eval/manifest.json lúc tải. n là số câu kỳ vọng; lệch là c0_prepare_eval dừng.
+eval_data:
+  sources:
+    gsm8k:   {kind: hf, repo: openai/gsm8k, config: main, split: test, n: 1319}
+    math500: {kind: hf, repo: HuggingFaceH4/MATH-500, split: test, n: 500}
+    amc23:                                   # 22 câu AMC 12A và 18 câu 12B năm 2023, đã bỏ lựa chọn, đáp án số nguyên
+      kind: github
+      repo: QwenLM/Qwen2.5-Math
+      commit: a45202bd16f1ec06f433442dc1152d0074773465
+      path: evaluation/data/amc23/test.jsonl
+      md5: 2280f89766f36e6a3973cb463299e710
+      n: 40
+    aime24:                                  # bản có sửa lỗi đề ở ba câu (I-5, I-6, II-10)
+      kind: hf
+      repo: Maxwell-Jia/AIME_2024
+      n: 30
+      cross_check:                           # nguồn độc lập để so đáp án; lệch là dừng
+        kind: github
+        repo: QwenLM/Qwen2.5-Math
+        commit: a45202bd16f1ec06f433442dc1152d0074773465
+        path: evaluation/data/aime24/test.jsonl
+        md5: 32725235207ca4c869efe5a9bce762b9
+    aime25:  {kind: hf, repo: opencompass/AIME2025, configs: [AIME2025-I, AIME2025-II], split: test, n: 30}
+    bbh:                                     # kho chính thức: 27 file, 23 dạng bài
+      kind: github
+      repo: suzgunmirac/BIG-Bench-Hard
+      commit: 9ee07bd481feebf959a6b59d61ea57bdcf30964d
+      dir: bbh
+      md5: 38aa28fa0c205a1636a0de17109dd53c     # md5 gộp của 27 file (combined_md5)
+      n: 6511
