@@ -140,6 +140,18 @@ eval:
   top_k: -1                     # tắt, như A.4
   max_new_tokens: 3072          # bằng training.max_seq_len, đúng nguyên tắc của A.4 (họ dùng 32.768 cho cả hai)
   on_truncation: keep           # câu trả lời vượt giới hạn bị cắt và chấm như bình thường, KHÔNG lấy mẫu lại
+  seed: 42                      # seed lấy mẫu khi đánh giá và seed rút mẫu BBH; chung cho mọi mô hình
+  # Ba tầng, chốt 03/10. Tầng 1 là bốn bộ của bài RSR, chạy cho mọi mô hình. Tầng 2 và 3 chạy tuỳ số giờ GPU
+  # (c1_evaluate --tier N chạy tầng 1 đến N). Không bộ nào bị bỏ; chỉ khác số mô hình được chấm trên từng bộ.
+  tiers:
+    - [math500, amc23, aime24, aime25]
+    - [gsm8k]
+    - [bbh]
+  bbh_per_task: 50              # [TẠM] số câu rút mỗi tác vụ BBH (27 tác vụ, 1.350 câu); chốt sau khi đo tốc độ sinh
+  # Sinh theo giai đoạn (c1_evaluate): mọi lượt sinh tới mốc đầu với lô lớn, lượt chưa dừng sinh tiếp tới mốc sau
+  # với lô nhỏ hơn, mốc cuối là max_new_tokens. gen_batch có một cỡ lô cho mỗi mốc. [TẠM] chỉnh sau khi đo trên GPU.
+  stage_tokens: [512, 1536]
+  gen_batch: [64, 32, 16]
 
 signals:
   # Local Naturalness (Just 2025, phương trình 2): mỗi câu được chấm khi mô hình chỉ thấy đề bài và tối đa
