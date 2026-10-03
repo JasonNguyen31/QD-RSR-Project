@@ -7,6 +7,7 @@
     python -m src.stage_b.b3_train --student qwen1_5b --ablation fit_quality --seed 42
     python -m src.stage_b.b3_train --student qwen1_5b --method qd_rsr --seed 42 --override selection.lambda_div=0.15
     python -m src.stage_b.b3_train --student qwen1_5b --method correct_only --seed 42 --resume   # chạy tiếp sau khi đứt
+    python -m src.stage_b.b3_train --student qwen1_5b --method correct_only --seed 42 --pilot 500 # chạy thử ngắn, khoảng 20 phút
 
 Đọc  data/stage_b/<student>_base/train.<tên>.jsonl và select.<tên>.json (tên do b2_select.selection_tag đặt)
 Ghi  outputs/models/<student>_base/<tên>/seed<seed>/
@@ -14,12 +15,25 @@ Ghi  outputs/models/<student>_base/<tên>/seed<seed>/
         run.json          cấu hình đã dùng, số mẫu, số token, thời gian, token/giây, đỉnh bộ nhớ, phép thử dừng
         train_log.jsonl   một dòng mỗi bước tối ưu: mất mát, tốc độ học, token/giây
         ckpt/             điểm lưu để chạy tiếp, xoá khi chạy xong
+     --pilot N ghi vào .../<tên>/pilot<N>_seed<seed>/ và không đụng tới thư mục của lần chạy thật.
 
 Các quy ước đã chốt mà mã này thực thi:
   - Định dạng mẫu giống hệt lúc b1_fit chấm tín hiệu: [system] câu SYSTEM_PROMPT_TRAIN, [user] đề bài, rồi chuỗi
-    suy luận ở vai trò assistant. Sau chuỗi là TOKEN KẾT THÚC LƯỢT (chốt 02/10: có học), lấy từ khuôn hội thoại
-    của tokenizer chứ không viết cứng. Mất mát chỉ tính trên chuỗi và token kết thúc lượt, không tính trên đề.
-    Mẫu phải cắt vì vượt training.max_seq_len thì KHÔNG gắn token kết thúc lượt (không dạy mô hình dừng giữa chừng).
+    suy luận ở vai trò assistant. Sau chuỗi là TOKEN KẾT THÚC (chốt 02/10: có học). Mất mát chỉ tính trên chuỗi
+    và token kết thúc, không tính trên đề. Mẫu phải cắt vì vượt training.max_seq_len thì KHÔNG gắn token kết thúc
+    (không dạy mô hình dừng giữa chừng).
+  - Token kết thúc là eos_token của tokenizer, với Qwen bản nền là <|endoftext|> (training.end_token: eos, chốt
+    03/10). Trước đó mã lấy token mà khuôn hội thoại đặt sau câu trả lời, tức <|im_end|>. Lần chạy thử
+    Correct-Only seed 42 và diagnose_stop cho thấy cách đó không dùng được với bản nền: hàng của <|im_end|>
+    trong lớp đầu ra trùng với 271 hàng chưa từng dùng (chuẩn 0,414, cos 1,000), LoRA không cập nhật lớp đầu ra,
+    nên sau ba epoch xác suất của <|im_end|> ở cuối chuỗi vẫn là 0 và chỉ 7/16 lượt sinh thử dừng (đều nhờ
+    <|endoftext|> còn sót). Bản nền chưa huấn luyện đã cho <|endoftext|> xác suất 0,961 ở đúng vị trí đó.
+    Phần đề vẫn dùng khuôn hội thoại như cũ, nên tín hiệu của b1_fit không phải chấm lại. Trước khi huấn luyện,
+    mã kiểm hàng của token kết thúc trong lớp đầu ra và từ chối chạy nếu nó trùng hướng với các hàng chưa từng
+    dùng (end_token_row), để lỗi này không lặp lại với mô hình học khác.
+  - pad_token của Qwen cũng là <|endoftext|>. Phần đệm được che theo VỊ TRÍ (pad_batch), không theo id của
+    token, nên nhãn của token kết thúc không bị che. Bộ ghép lô nào che nhãn theo id của pad_token sẽ xoá mất
+    nhãn này và mô hình lại không dừng.
   - Mọi phương án đi chung một nhánh tính mất mát. Mất mát của một lô hiệu dụng là trung bình theo token có trọng
     số: Σ_i w_i Σ_t CE(i,t) / Σ_i w_i n_i, với w_i là cột weight của file train (1 cho mọi phương án, trọng số
     mềm cho LARK) và n_i là số token được tính của mẫu i. Với w_i = 1, đây đúng là mất mát chuẩn của tinh chỉnh
@@ -43,8 +57,12 @@ Các quy ước đã chốt mà mã này thực thi:
     trong select.<tên>.json (file chép giữa hai máy bị hỏng hoặc không cùng lần chọn).
 
 Phép thử dừng: sau khi huấn luyện, mô hình sinh thử cho vài đề bài với cài đặt đánh giá. Tỷ lệ lượt sinh dừng ở
-token kết thúc lượt được ghi vào run.json. Nếu mô hình không dừng thì mỗi câu đánh giá sẽ sinh đủ
+token kết thúc được ghi vào run.json. Nếu mô hình không dừng thì mỗi câu đánh giá sẽ sinh đủ
 eval.max_new_tokens, nên phải biết điều này TRƯỚC khi chạy cả loạt.
+
+Chạy thử ngắn (--pilot N): huấn luyện đủ số epoch trên khoảng N mẫu (trọn câu hỏi, rút cố định theo seed), rồi
+làm phép thử dừng trên ĐÚNG các đề của lần chạy thật. Dùng để kiểm một thay đổi của cách huấn luyện trong vài chục
+phút trước khi bỏ ra gần 4 giờ cho một lần chạy đủ. Kết quả của nó không phải số liệu của phương án.
 """
 from __future__ import annotations
 
@@ -88,6 +106,45 @@ def end_of_turn_ids(tok) -> list[int]:
             raise SystemExit("Tokenizer không có token kết thúc lượt lẫn eos_token; không dạy mô hình dừng được.")
         ids = [tok.eos_token_id]
     return list(ids[:1])         # chỉ token đầu của phần đuôi: các ký tự xuống dòng sau đó không cần học
+
+
+END_TOKEN_MODES = ("eos", "chat_template")
+UNTRAINED_COS = 0.95             # cos với trung bình các hàng chưa từng dùng từ mức này trở lên là "chưa được học"
+
+
+def end_token_ids(tok, mode: str) -> list[int]:
+    """Token gắn sau mỗi chuỗi huấn luyện, theo training.end_token.
+
+    "eos"            eos_token của tokenizer (Qwen bản nền: <|endoftext|>). Cách đã chốt 03/10.
+    "chat_template"  token mà khuôn hội thoại đặt sau câu trả lời (<|im_end|>). Chỉ dùng được khi mô hình đã học
+                     token đó, tức bản Instruct; giữ lại để tái lập lần chạy thử đầu tiên.
+    """
+    if mode == "eos":
+        if tok.eos_token_id is None:
+            raise SystemExit("Tokenizer không có eos_token; không dạy mô hình dừng được.")
+        return [int(tok.eos_token_id)]
+    if mode == "chat_template":
+        return end_of_turn_ids(tok)
+    raise SystemExit(f"training.end_token = '{mode}' không hợp lệ. Hiện có: {list(END_TOKEN_MODES)}")
+
+
+def end_token_is_untrained(row: Mapping, limit: float = UNTRAINED_COS) -> bool:
+    """Hàng của token kết thúc có trùng hướng với các hàng chưa từng dùng không (kết quả của end_token_row)."""
+    cos = row.get("cos_unused_mean")
+    return cos is not None and cos >= limit
+
+
+def pilot_rows(rows: Sequence[Mapping], n: int, seed: int) -> list:
+    """Khoảng n mẫu cho lần chạy thử ngắn: lấy trọn từng câu hỏi theo thứ tự cố định sha256 của seed|pilot|qid
+    cho tới khi đủ n mẫu, giữ nguyên thứ tự dòng của file train."""
+    counts = Counter(r["qid"] for r in rows)
+    chosen, total = set(), 0
+    for qid in sorted(counts, key=lambda q: hashlib.sha256(f"{seed}|pilot|{q}".encode()).hexdigest()):
+        if total >= n:
+            break
+        chosen.add(qid)
+        total += counts[qid]
+    return [r for r in rows if r["qid"] in chosen]
 
 
 def encode_sample(tok, question: str, text: str, max_len: int, eot_ids: Sequence[int]) -> dict | None:
@@ -174,8 +231,48 @@ def load_selection(sel_dir: Path, tag: str, k: int) -> tuple[list, dict]:
     return rows, meta
 
 
-def run_dir(cfg: Mapping, tag: str, seed: int, smoke: bool = False) -> Path:
-    return path_of(cfg, "out_models") / student_tag(cfg) / tag / ("smoke" if smoke else f"seed{seed}")
+def stop_token_ids(tok, eot_ids: Sequence[int]) -> list[int]:
+    """Các token làm việc sinh dừng: token kết thúc đã học, rồi eos_token của tokenizer nếu là token khác."""
+    return [eot_ids[0]] + ([tok.eos_token_id] if tok.eos_token_id not in (None, eot_ids[0]) else [])
+
+
+def stop_check_items(rows: Sequence[Mapping], n: int, seed: int) -> list[dict]:
+    """n đề bài dùng cho phép thử dừng: mỗi câu hỏi một lần, theo thứ tự cố định sha256 của seed|qid."""
+    seen, items = set(), []
+    for r in sorted(rows, key=lambda r: hashlib.sha256(f"{seed}|{r['qid']}".encode()).hexdigest()):
+        if len(items) >= n:
+            break
+        if r["qid"] not in seen:
+            seen.add(r["qid"])
+            items.append({"qid": r["qid"], "question": r["question"]})
+    return items
+
+
+def split_at_stop(row: Sequence[int], stops: Sequence[int]) -> tuple[list[int], int | None]:
+    """(phần token trước token dừng đầu tiên, token dừng đó). Không có token dừng thì trả cả dòng và None."""
+    cut = next((p for p, t in enumerate(row) if t in stops), None)
+    return (list(row), None) if cut is None else (list(row[:cut]), row[cut])
+
+
+def summarise_stop(new_rows: Sequence[Sequence[int]], stops: Sequence[int], decode, max_new_tokens: int,
+                   name=str) -> dict:
+    """Tóm tắt phép thử dừng. stopped_by cho biết lượt dừng là do token nào; new_tokens là số token của từng lượt."""
+    lengths, by, boxed = [], Counter(), 0
+    for row in new_rows:
+        kept, stop = split_at_stop(row, stops)
+        lengths.append(len(kept))
+        if stop is not None:
+            by[name(stop)] += 1
+        boxed += "\\boxed" in decode(kept)
+    m, stopped = len(lengths), sum(by.values())
+    return {"n": m, "stopped": stopped, "stopped_share": stopped / m if m else None, "with_boxed": boxed,
+            "mean_new_tokens": sum(lengths) / m if m else None, "max_new_tokens": int(max_new_tokens),
+            "stopped_by": dict(by), "new_tokens": lengths}
+
+
+def run_dir(cfg: Mapping, tag: str, seed: int, smoke: bool = False, pilot: int = 0) -> Path:
+    name = "smoke" if smoke else f"pilot{pilot}_seed{seed}" if pilot else f"seed{seed}"
+    return path_of(cfg, "out_models") / student_tag(cfg) / tag / name
 
 
 def total_steps(n_samples: int, cfg: Mapping) -> tuple[int, int]:
@@ -229,6 +326,27 @@ def load_model(cfg: Mapping, seed: int):
     model.config.use_cache = False
     model.train()                                # gradient checkpointing chỉ có tác dụng ở chế độ huấn luyện
     return model, tok
+
+
+def end_token_row(model, n_tok: int, end_id: int) -> dict:
+    """Hàng của token kết thúc trong lớp đầu ra, so với các hàng chưa từng dùng (id từ len(tokenizer) trở lên:
+    không văn bản nào chứa chúng). LoRA không cập nhật lớp đầu ra, nên một token mà bản nền chưa học thì không
+    thể được phát ra dù huấn luyện bao lâu. Mô hình không có hàng thừa thì không so được, các trường để None."""
+    import torch
+
+    base = model.get_base_model() if hasattr(model, "get_base_model") else model
+    w = base.lm_head.weight
+    info = {"norm": None, "unused_rows": 0, "unused_median_norm": None, "cos_unused_mean": None}
+    if w.dim() != 2 or not w.is_floating_point() or end_id >= w.shape[0]:
+        return info
+    with torch.no_grad():
+        row = w[end_id].float()
+        info["norm"] = float(row.norm())
+        if w.shape[0] > n_tok:
+            unused = w[n_tok:].float()
+            info.update(unused_rows=int(unused.shape[0]), unused_median_norm=float(unused.norm(dim=1).median()),
+                        cos_unused_mean=float(torch.nn.functional.cosine_similarity(row, unused.mean(0), dim=0)))
+    return info
 
 
 def weighted_chunked_loss(model, input_ids, attention_mask, labels, weights, chunk: int = 256):
@@ -289,53 +407,49 @@ def load_ckpt(model, opt, sched, path: Path) -> dict:
     return state
 
 
-def check_stop(model, tok, rows: Sequence[Mapping], cfg: Mapping, eot_ids: Sequence[int], n: int, seed: int,
-               max_new_tokens: int | None = None, batch: int = 8) -> dict:
-    """Sinh thử cho n đề bài với cài đặt đánh giá, đo tỷ lệ lượt sinh dừng ở token kết thúc lượt."""
+def generate_for_stop_check(model, tok, questions: Sequence[str], cfg: Mapping, stops: Sequence[int], seed: int,
+                            max_new_tokens: int | None = None, batch: int = 8) -> list[list[int]]:
+    """Sinh thử cho từng đề bài với cài đặt đánh giá. Trả về token mới của từng đề, kể cả token dừng và phần đệm
+    sau nó. Tách riêng để diagnose_stop sinh lại đúng những lượt này (cùng seed, cùng lô, cùng cài đặt)."""
     import torch
 
     ev = cfg["eval"]
-    seen, questions = set(), []
-    for r in sorted(rows, key=lambda r: hashlib.sha256(f"{seed}|{r['qid']}".encode()).hexdigest()):
-        if r["qid"] not in seen:
-            seen.add(r["qid"])
-            questions.append(r["question"])
-        if len(questions) == n:
-            break
-    stops = [eot_ids[0]] + ([tok.eos_token_id] if tok.eos_token_id not in (None, eot_ids[0]) else [])
     side, tok.padding_side = tok.padding_side, "left"
     model.eval()
     model.config.use_cache = True
     torch.manual_seed(seed)
-    new_tokens, stopped, boxed = [], 0, 0
+    new_rows: list[list[int]] = []
     try:
         for i in range(0, len(questions), batch):
             prompts = [tok.apply_chat_template(prompt_messages(q), tokenize=False, add_generation_prompt=True)
                        for q in questions[i:i + batch]]
-            enc = tok(prompts, return_tensors="pt", padding=True, add_special_tokens=False).to("cuda")
+            enc = tok(prompts, return_tensors="pt", padding=True, add_special_tokens=False).to(model.device)
             with torch.no_grad():
                 out = model.generate(**enc, do_sample=True, temperature=float(ev["temperature"]),
                                      top_p=float(ev["top_p"]), top_k=max(0, int(ev["top_k"])),
                                      max_new_tokens=int(max_new_tokens or ev["max_new_tokens"]),
-                                     eos_token_id=stops, pad_token_id=tok.pad_token_id)
-            for row in out[:, enc["input_ids"].shape[1]:].tolist():
-                cut = next((p for p, t in enumerate(row) if t in stops), None)
-                stopped += cut is not None
-                kept = row if cut is None else row[:cut]
-                new_tokens.append(len(kept))
-                boxed += "\\boxed" in tok.decode(kept, skip_special_tokens=True)
+                                     eos_token_id=list(stops), pad_token_id=tok.pad_token_id)
+            new_rows.extend(out[:, enc["input_ids"].shape[1]:].tolist())
     finally:
         tok.padding_side = side
         model.config.use_cache = False
         model.train()
-    m = len(new_tokens)
-    return {"n": m, "stopped": stopped, "stopped_share": stopped / m if m else None, "with_boxed": boxed,
-            "mean_new_tokens": sum(new_tokens) / m if m else None,
-            "max_new_tokens": int(max_new_tokens or ev["max_new_tokens"])}
+    return new_rows
+
+
+def check_stop(model, tok, rows: Sequence[Mapping], cfg: Mapping, eot_ids: Sequence[int], n: int, seed: int,
+               max_new_tokens: int | None = None, batch: int = 8) -> dict:
+    """Sinh thử cho n đề bài với cài đặt đánh giá, đo tỷ lệ lượt sinh dừng ở token kết thúc lượt."""
+    stops = stop_token_ids(tok, eot_ids)
+    items = stop_check_items(rows, n, seed)
+    new_rows = generate_for_stop_check(model, tok, [it["question"] for it in items], cfg, stops, seed,
+                                       max_new_tokens, batch)
+    return summarise_stop(new_rows, stops, lambda ids: tok.decode(ids, skip_special_tokens=True),
+                          int(max_new_tokens or cfg["eval"]["max_new_tokens"]), tok.convert_ids_to_tokens)
 
 
 def train(cfg: Mapping, tag: str, rows: Sequence[Mapping], meta: Mapping, seed: int, out: Path, resume: bool,
-          smoke: bool, n_stop: int) -> dict:
+          smoke: bool, n_stop: int, pilot: int = 0) -> dict:
     import torch
 
     t = cfg["training"]
@@ -343,11 +457,18 @@ def train(cfg: Mapping, tag: str, rows: Sequence[Mapping], meta: Mapping, seed: 
     torch.cuda.set_per_process_memory_fraction(frac)     # vượt thì báo hết bộ nhớ, không âm thầm tràn sang RAM
     torch.cuda.reset_peak_memory_stats()
     model, tok = load_model(cfg, seed)
-    eot_ids = end_of_turn_ids(tok)
+    eot_ids = end_token_ids(tok, str(t["end_token"]))
+    eot_row = end_token_row(model, len(tok), eot_ids[0])
+    if end_token_is_untrained(eot_row):
+        raise SystemExit(
+            f"Token kết thúc {tok.convert_ids_to_tokens(eot_ids)} chưa được mô hình này học: hàng của nó trong lớp "
+            f"đầu ra có cos {eot_row['cos_unused_mean']:.3f} với trung bình của {eot_row['unused_rows']} hàng chưa "
+            f"từng dùng (chuẩn {eot_row['norm']:.3f} so với {eot_row['unused_median_norm']:.3f}). LoRA không cập "
+            f"nhật lớp đầu ra nên mô hình sẽ không dừng được. Đổi training.end_token (hiện là '{t['end_token']}').")
     max_len = int(t["max_seq_len"])
 
     samples, skipped = [], 0
-    for r in rows[:SMOKE_SAMPLES] if smoke else rows:
+    for r in rows[:SMOKE_SAMPLES] if smoke else pilot_rows(rows, pilot, seed) if pilot else rows:
         s = encode_sample(tok, r["question"], r["text"], max_len, eot_ids)
         if s is None:
             skipped += 1
@@ -363,7 +484,8 @@ def train(cfg: Mapping, tag: str, rows: Sequence[Mapping], meta: Mapping, seed: 
     warmup = 0 if smoke else math.ceil(total * float(t["warmup_ratio"]))
     print(f"[b3] {tag} | {cfg['student']['base_model_id']} | {'QLoRA 4-bit' if t['load_in_4bit'] else 'LoRA 16-bit'} "
           f"| seed {seed} | {len(samples)} mẫu, {sum(lengths)} token, bị cắt {n_trunc} | lô {bs} x {accum}, "
-          f"{total} bước tối ưu, khởi động {warmup} | token kết thúc lượt {tok.convert_ids_to_tokens(eot_ids)}")
+          f"{total} bước tối ưu, khởi động {warmup} | token kết thúc {tok.convert_ids_to_tokens(eot_ids)}"
+          + (f" | CHẠY THỬ NGẮN trên {len(samples)} mẫu" if pilot else ""))
 
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=float(t["learning_rate"]), weight_decay=float(t["weight_decay"]))
@@ -433,7 +555,8 @@ def train(cfg: Mapping, tag: str, rows: Sequence[Mapping], meta: Mapping, seed: 
     import peft
     import transformers
     result = {
-        "tag": tag, "status": "smoke" if smoke else "done", "student": cfg["student"]["base_model_id"],
+        "tag": tag, "status": "smoke" if smoke else "pilot" if pilot else "done",
+        "student": cfg["student"]["base_model_id"],
         "seed": seed, "finished": now_iso(), "git_commit": git_commit(Path(cfg["root"])),
         "train_file": meta["train_file"], "train_md5": meta["md5"], "selection": {
             key: meta.get(key) for key in ("name", "pool", "rule", "signal", "weights", "a", "b", "lambda_div", "k")},
@@ -443,6 +566,7 @@ def train(cfg: Mapping, tag: str, rows: Sequence[Mapping], meta: Mapping, seed: 
             "gradient_checkpointing", "weight_decay", "max_grad_norm", "loss_chunk")},
         "samples": len(samples), "truncated_samples": n_trunc, "tokens_per_epoch": sum(lengths),
         "label_tokens_per_epoch": sum(s["n_labels"] for s in samples), "optimizer_steps": gstep,
+        "end_token_mode": str(t["end_token"]), "end_token_row": eot_row,
         "end_of_turn_token": tok.convert_ids_to_tokens(eot_ids), "end_of_turn_ids": list(eot_ids),
         "epoch_loss": state["epoch_loss"], "seconds": round(seconds, 1), "hours": round(seconds / 3600, 3),
         "tok_per_s": round(state["tokens"] / seconds, 1) if seconds else None,
@@ -533,6 +657,14 @@ def selftest() -> int:
     checks.append(("trọng số khác nhau cho mất mát khác trọng số đều", abs(float(ref) - val_u) > 1e-4))
     checks.append(("tốc độ học: 0 ở bước đầu, đỉnh sau khởi động, về 0 ở bước cuối",
                    lr_factor(0, 100, 10) == 0 and lr_factor(10, 100, 10) == 1.0 and lr_factor(100, 100, 10) < 1e-9))
+    with torch.no_grad():                        # hàng 30 trở lên coi như chưa từng dùng; hàng 5 bị gán trùng hướng
+        net.lm_head.weight[30:] = net.lm_head.weight[30:].mean(0) + 0.01 * torch.randn(vocab - 30, hid)
+        net.lm_head.weight[5] = 0.4 * net.lm_head.weight[30:].mean(0)
+    dead, alive = end_token_row(net, 30, 5), end_token_row(net, 30, 6)
+    checks.append(("token kết thúc trùng hướng với các hàng chưa từng dùng thì bị từ chối",
+                   end_token_is_untrained(dead) and dead["unused_rows"] == vocab - 30))
+    checks.append(("token kết thúc đã được học thì được chấp nhận; mô hình không có hàng thừa thì không so",
+                   not end_token_is_untrained(alive) and not end_token_is_untrained(end_token_row(net, vocab, 5))))
     ok = True
     for name, passed in checks:
         ok &= bool(passed)
@@ -551,6 +683,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--seldir", help="thư mục tập chọn, mặc định data/stage_b/<student>_base")
     ap.add_argument("--plan", action="store_true", help="chỉ in số mẫu và số bước, không cần GPU")
     ap.add_argument("--smoke", action="store_true", help=f"chạy thử {SMOKE_SAMPLES} mẫu, 2 bước, rồi sinh thử")
+    ap.add_argument("--pilot", type=int, default=0, metavar="N",
+                    help="chạy thử ngắn: đủ số epoch trên khoảng N mẫu, phép thử dừng trên các đề của lần chạy thật")
     ap.add_argument("--resume", action="store_true", help="chạy tiếp từ điểm lưu nếu có")
     ap.add_argument("--force", action="store_true", help="chạy lại dù lần chạy này đã xong")
     ap.add_argument("--check-stop", type=int, help="số đề bài sinh thử sau huấn luyện (0 để bỏ qua)")
@@ -571,33 +705,39 @@ def main(argv: Sequence[str] | None = None) -> int:
     if meta["student"] != cfg["student"]["base_model_id"]:
         raise SystemExit(f"Tập chọn này dành cho {meta['student']}, không phải {cfg['student']['base_model_id']}.")
 
-    steps, warmup = total_steps(len(rows), cfg)
+    if args.pilot and args.smoke:
+        ap.error("--pilot và --smoke là hai chế độ khác nhau, chỉ dùng một")
+    if args.pilot < 0:
+        ap.error("--pilot cần một số mẫu dương")
+    used = pilot_rows(rows, args.pilot, seed) if args.pilot else rows
+    steps, warmup = total_steps(len(used), cfg)
     if args.plan:
-        chain_tokens = sum(r["n_tokens"] or 0 for r in rows)
+        chain_tokens = sum(r["n_tokens"] or 0 for r in used)
         t = cfg["training"]
-        print(f"[b3] {tag} | {len(rows)} mẫu | lô {t['batch_size']} x {t['grad_accum']} | {t['num_epochs']} epoch | "
+        print(f"[b3] {tag} | {len(used)} mẫu{' (chạy thử ngắn)' if args.pilot else ''} | lô {t['batch_size']} x "
+              f"{t['grad_accum']} | {t['num_epochs']} epoch | "
               f"{steps} bước tối ưu, khởi động {warmup} | {chain_tokens} token chuỗi mỗi epoch (chưa tính đề bài) | "
-              f"tổng trọng số {sum(r['weight'] for r in rows):.1f}")
+              f"tổng trọng số {sum(r['weight'] for r in used):.1f} | token kết thúc: {cfg['training']['end_token']}")
         return 0
 
-    out = run_dir(cfg, tag, seed, args.smoke)
+    out = run_dir(cfg, tag, seed, args.smoke, args.pilot)
     done = out / "run.json"
     if done.exists() and not args.smoke and not args.force and read_json(done).get("status") == "done":
         print(f"[b3] lần chạy này đã xong: {out}. Thêm --force nếu muốn chạy lại.")
         return 0
-    if (out / "ckpt").exists() and not args.resume and not args.force:
+    if (out / "ckpt").exists() and not args.resume and not args.force and not args.pilot:
         raise SystemExit(f"Có điểm lưu dở ở {out / 'ckpt'}. Thêm --resume để chạy tiếp, hoặc --force để làm lại từ đầu.")
-    if args.force or args.smoke:
+    if args.force or args.smoke or args.pilot:
         shutil.rmtree(out, ignore_errors=True)
     ensure_dir(out)
     n_stop = args.check_stop if args.check_stop is not None else (4 if args.smoke else int(cfg["training"]["stop_check_samples"]))
-    r = train(cfg, tag, rows, meta, seed, out, args.resume, args.smoke, n_stop)
+    r = train(cfg, tag, rows, meta, seed, out, args.resume and not args.pilot, args.smoke, n_stop, args.pilot)
     line = (f"[b3] xong {tag} seed {seed}: {r['hours']:.2f} giờ, {r['tok_per_s']} token/giây, đỉnh bộ nhớ cấp phát "
             f"{r['peak_allocated_gb']} GB, giữ chỗ {r['peak_reserved_gb']} GB")
     if r["stop_check"]:
         s = r["stop_check"]
-        line += (f" | sinh thử {s['n']} đề: {s['stopped']} lượt dừng đúng, {s['with_boxed']} có \\boxed, trung bình "
-                 f"{s['mean_new_tokens']:.0f} token (trần {s['max_new_tokens']})")
+        line += (f" | sinh thử {s['n']} đề: {s['stopped']} lượt dừng đúng {s['stopped_by']}, {s['with_boxed']} có "
+                 f"\\boxed, trung bình {s['mean_new_tokens']:.0f} token (trần {s['max_new_tokens']})")
     print(line)
     print(f"[b3] kết quả ở {out}")
     return 0

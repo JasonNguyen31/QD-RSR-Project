@@ -113,7 +113,13 @@ training:
   max_grad_norm: 1.0            # cắt chuẩn gradient của cả lô hiệu dụng, như mặc định của transformers
   loss_chunk: 256               # số vị trí mỗi đoạn khi tính lớp đầu ra và mất mát (đã đo bằng check_vram)
   save_every_steps: 100         # cứ bấy nhiêu bước tối ưu thì ghi một điểm lưu để chạy tiếp khi đứt
-  stop_check_samples: 16        # số đề bài sinh thử sau huấn luyện để đo tỷ lệ dừng ở token kết thúc lượt
+  stop_check_samples: 16        # số đề bài sinh thử sau huấn luyện để đo tỷ lệ dừng ở token kết thúc
+  # Token gắn sau mỗi chuỗi huấn luyện để mô hình học dừng. ĐÃ CHỐT 03/10: eos, tức eos_token của tokenizer
+  # (Qwen bản nền: <|endoftext|>). Giá trị kia, chat_template, lấy <|im_end|> từ khuôn hội thoại và KHÔNG dùng
+  # được với bản nền: hàng của <|im_end|> trong lớp đầu ra trùng với các hàng chưa từng dùng, LoRA không cập
+  # nhật lớp đó, nên lần chạy thử Correct-Only chỉ dừng 7/16 lượt (diagnose_stop, 03/10). Bản nền chưa huấn
+  # luyện đã cho <|endoftext|> xác suất 0,961 ở cuối chuỗi. Phần đề vẫn dùng khuôn hội thoại như lúc b1 chấm.
+  end_token: eos
 
 hardware:
   vram_budget_gb: 10            # không chạy sát trần 12GB (Notion mục B8)

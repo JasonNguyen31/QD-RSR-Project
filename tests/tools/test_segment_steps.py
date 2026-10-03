@@ -121,9 +121,12 @@ def test_external_step_ends_feed_token_steps():
 def test_placeholder_prompt_file_is_refused(tmp_path):
     from src.common.config import load_config
     cfg = load_config()
-    with pytest.raises(SystemExit, match="chưa có lời nhắc"):
-        ss.load_prompt(Path(cfg.root) / cfg.segmenter.prompt_file)     # file trong repo chỉ là chỗ giữ chỗ
     p = tmp_path / "p.txt"
+    p.write_text(f"{ss.PLACEHOLDER}\nproblem: {{problem}}\nsolution: {{solution}}", encoding="utf-8")
+    with pytest.raises(SystemExit, match="chưa có lời nhắc"):
+        ss.load_prompt(p)                                              # file còn dấu giữ chỗ thì bị từ chối
+    real = ss.load_prompt(Path(cfg.root) / cfg.segmenter.prompt_file)  # file trong repo đã có lời nhắc của phụ lục B.1
+    assert "{problem}" in real and "{solution}" in real and ss.PLACEHOLDER not in real
     p.write_text("split {solution} only", encoding="utf-8")
     with pytest.raises(SystemExit):
         ss.load_prompt(p)                                              # thiếu {problem}

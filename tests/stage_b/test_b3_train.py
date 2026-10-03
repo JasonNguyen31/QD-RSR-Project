@@ -181,3 +181,97 @@ def test_module_imports_no_gpu_library_at_top_level():
            for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))
            for a in (n.names if isinstance(n, ast.Import) else [None])}
     assert not top & {"torch", "transformers", "peft", "safetensors", "bitsandbytes"}
+
+
+# ---------------------------------------------------------------- phép thử dừng (phần không cần torch)
+def test_stop_tokens_are_end_of_turn_then_eos_when_different():
+    assert b3.stop_token_ids(FakeTok(), [2]) == [2, 0]                  # <|im_end|> rồi eos_token
+    assert b3.stop_token_ids(FakeTok(), [0]) == [0]                     # trùng nhau thì chỉ một token
+
+
+def test_stop_check_items_are_distinct_questions_in_an_order_fixed_by_seed():
+    rows = [{"qid": f"q{i // 3}", "question": f"Question {i // 3}?"} for i in range(30)]
+    items = b3.stop_check_items(rows, 4, 42)
+    assert len(items) == 4 == len({it["qid"] for it in items})
+    assert all(it["question"] == f"Question {it['qid'][1:]}?" for it in items)
+    assert items == b3.stop_check_items(list(reversed(rows)), 4, 42)    # không phụ thuộc thứ tự dòng trong file
+    assert items[:2] == b3.stop_check_items(rows, 2, 42)
+    assert [it["qid"] for it in items] != [it["qid"] for it in b3.stop_check_items(rows, 4, 43)]
+    assert len(b3.stop_check_items(rows, 99, 42)) == 10                 # không đủ câu thì lấy hết
+
+
+def test_stop_summary_counts_stops_by_token_and_lengths_before_the_stop():
+    box = [10 + ord(c) for c in "\\boxed{2}"]
+    rows = [box + [2, 0, 0],            # dừng ở <|im_end|>, phần sau là đệm
+            [50, 51] + box + [0, 0],    # dừng ở eos_token
+            [50] * 6,                   # không dừng, không có \boxed
+            box + [50] * 4]             # không dừng dù đã có \boxed
+    decode = lambda ids: "".join(chr(i - 10) for i in ids)
+    s = b3.summarise_stop(rows, [2, 0], decode, 16, {2: "<|im_end|>", 0: "<|endoftext|>"}.get)
+    assert (s["n"], s["stopped"], s["with_boxed"], s["max_new_tokens"]) == (4, 2, 3, 16)
+    assert s["stopped_share"] == 0.5 and s["stopped_by"] == {"<|im_end|>": 1, "<|endoftext|>": 1}
+    assert s["new_tokens"] == [len(box), len(box) + 2, 6, len(box) + 4]
+    assert s["mean_new_tokens"] == sum(s["new_tokens"]) / 4
+    assert b3.split_at_stop([5, 6, 2, 0], [2, 0]) == ([5, 6], 2) and b3.split_at_stop([5, 6], [2, 0]) == ([5, 6], None)
+
+
+# ---------------------------------------------------------------- token kết thúc (chốt 03/10) và chạy thử ngắn
+def test_end_token_is_the_tokenizer_eos_by_decision_of_0310():
+    """Cố ý ghi cứng: bản nền Qwen chưa học <|im_end|>, nên token kết thúc là eos_token (<|endoftext|>)."""
+    cfg = load_config(method="correct_only", student="qwen1_5b")
+    assert cfg.training.end_token == "eos"
+    assert load_config(method="qd_rsr", student="qwen7b").training.end_token == "eos"
+    assert b3.end_token_ids(FakeTok(), "eos") == [FakeTok.eos_token_id]
+    assert b3.end_token_ids(FakeTok(), "chat_template") == [SPECIAL["<|im_end|>"]]      # cách cũ, để tái lập
+    with pytest.raises(SystemExit, match="không hợp lệ"):
+        b3.end_token_ids(FakeTok(), "im_end")
+
+    class NoEos(FakeTok):
+        eos_token_id = None
+    with pytest.raises(SystemExit, match="eos_token"):
+        b3.end_token_ids(NoEos(), "eos")
+    assert b3.stop_token_ids(FakeTok(), [FakeTok.eos_token_id]) == [FakeTok.eos_token_id]   # một token dừng duy nhất
+
+
+def test_end_token_label_survives_padding_although_pad_is_the_same_token():
+    """pad_token của Qwen cũng là <|endoftext|>: phần đệm phải bị che theo vị trí, không theo id của token."""
+    tok = FakeTok()
+    assert tok.pad_token_id == tok.eos_token_id
+    eot = b3.end_token_ids(tok, "eos")
+    short = {**b3.encode_sample(tok, "q", "ab \\boxed{1}", 500, eot), "weight": 1.0}
+    long = {**b3.encode_sample(tok, "q", "a much longer chain \\boxed{1}", 500, eot), "weight": 1.0}
+    batch = b3.pad_batch([short, long], tok.pad_token_id)
+    n = len(short["ids"])
+    assert batch["input_ids"][0][n - 1] == eot[0] and batch["labels"][0][n - 1] == eot[0]   # nhãn kết thúc còn nguyên
+    assert set(batch["labels"][0][n:]) == {b3.IGNORE} and set(batch["attention_mask"][0][n:]) == {0}
+    assert batch["labels"][1][-1] == eot[0]
+    assert sum(lab != b3.IGNORE for lab in batch["labels"][0]) == short["n_labels"]         # mẫu số không lệch
+
+
+def test_untrained_end_token_row_is_recognised_from_its_direction():
+    dead = {"norm": 0.414, "unused_rows": 271, "unused_median_norm": 0.414, "cos_unused_mean": 1.0}     # <|im_end|>
+    alive = {"norm": 1.151, "unused_rows": 271, "unused_median_norm": 0.414, "cos_unused_mean": -0.381} # <|endoftext|>
+    unknown = {"norm": 1.0, "unused_rows": 0, "unused_median_norm": None, "cos_unused_mean": None}
+    assert b3.end_token_is_untrained(dead)
+    assert not b3.end_token_is_untrained(alive) and not b3.end_token_is_untrained(unknown)
+
+
+def test_pilot_takes_whole_questions_in_an_order_fixed_by_seed(seldir, capsys):
+    rows, _ = b3.load_selection(seldir, "correct_only.k3", 3)
+    sub = b3.pilot_rows(rows, 20, 42)
+    per_q = {q: sum(r["qid"] == q for r in sub) for q in {r["qid"] for r in sub}}
+    assert set(per_q.values()) == {3} and 20 <= len(sub) < 23                    # trọn câu hỏi, vừa đủ n
+    assert sub == [r for r in rows if r["qid"] in per_q]                         # giữ thứ tự dòng của file train
+    assert sub == b3.pilot_rows(rows, 20, 42)
+    assert {r["tid"] for r in sub} == {r["tid"] for r in b3.pilot_rows(list(reversed(rows)), 20, 42)}
+    assert {r["qid"] for r in sub} != {r["qid"] for r in b3.pilot_rows(rows, 20, 43)}
+    assert len(b3.pilot_rows(rows, 10_000, 42)) == len(rows)
+    cfg = load_config(method="correct_only", student="qwen1_5b")
+    assert b3.run_dir(cfg, "correct_only.k3", 42, pilot=500).name == "pilot500_seed42"
+    assert b3.run_dir(cfg, "correct_only.k3", 42).name == "seed42"               # lần chạy thật không đổi chỗ
+    assert b3.main(["--method", "correct_only", "--seldir", str(seldir), "--plan", "--pilot", "20"]) == 0
+    line = capsys.readouterr().out
+    assert "21 mẫu (chạy thử ngắn)" in line and "token kết thúc: eos" in line
+    assert math.ceil(21 / 16) * cfg.training.num_epochs == b3.total_steps(21, cfg)[0]
+    with pytest.raises(SystemExit):
+        b3.main(["--method", "correct_only", "--seldir", str(seldir), "--pilot", "20", "--smoke"])
