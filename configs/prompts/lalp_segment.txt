@@ -1,0 +1,22 @@
+Given the problem and solution to the problem, can you please split the
+solution into groups of logical sub steps and return those groups in a
+json format:
+
+    problem: {problem}
+    solution: {solution}
+
+    E.g. {
+    "sentence_groups": {
+        "group1": [
+        "sentences from solution"
+        ],
+        "group2": [
+        "sentences from solution"
+        ],
+        ...
+    }
+    }
+
+Please split the solution into logical steps and return those steps in a json format.
+Remember do not modify the solution phrasing, keep the wordings original and
+do not skip any step.

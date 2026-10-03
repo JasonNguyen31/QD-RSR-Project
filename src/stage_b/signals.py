@@ -131,16 +131,26 @@ def sentence_ends(text: str) -> list[int]:
     return ends
 
 
-def token_steps(offsets: Sequence[tuple[int, int]], text: str) -> list[tuple[int, int]]:
-    """Chia token của chuỗi thành các bước theo câu: danh sách (token đầu, token cuối không bao gồm).
+def token_steps(offsets: Sequence[tuple[int, int]], text: str,
+                ends: Sequence[int] | None = None) -> list[tuple[int, int]]:
+    """Chia token của chuỗi thành các bước: danh sách (token đầu, token cuối không bao gồm).
 
-    Token thuộc câu chứa ký tự đầu tiên của nó. Các bước liền nhau và phủ kín mọi token, nên tổng số token
+    Mặc định mỗi bước là một câu (sentence_ends). Truyền ends để dùng mốc bước có sẵn, ví dụ các bước do
+    GLM-4.5-Air cắt (src/tools/segment_steps): ends là vị trí ký tự kết thúc của từng bước, tăng dần, mốc cuối
+    bằng len(text).
+
+    Token thuộc bước chứa ký tự đầu tiên của nó. Các bước liền nhau và phủ kín mọi token, nên tổng số token
     của các bước đúng bằng số token của chuỗi.
     """
     n = len(offsets)
     if n == 0:
         return []
-    ends = sentence_ends(text)
+    if ends is None:
+        ends = sentence_ends(text)
+    else:
+        ends = list(ends)
+        if not ends or ends[-1] != len(text) or any(b <= a for a, b in zip(ends, ends[1:])) or ends[0] <= 0:
+            raise ValueError("ends phải tăng dần, dương, và mốc cuối bằng len(text)")
     steps, start, j = [], 0, 0
     for t, (a, _b) in enumerate(offsets):
         while j < len(ends) - 1 and a >= ends[j]:

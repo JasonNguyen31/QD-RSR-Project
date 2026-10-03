@@ -24,6 +24,12 @@ Các quy ước đã chốt mà mã này thực thi:
     số: Σ_i w_i Σ_t CE(i,t) / Σ_i w_i n_i, với w_i là cột weight của file train (1 cho mọi phương án, trọng số
     mềm cho LARK) và n_i là số token được tính của mẫu i. Với w_i = 1, đây đúng là mất mát chuẩn của tinh chỉnh
     có giám sát (trung bình trên mọi token của lô).
+    Đối chiếu mã LARK chính thức ngày 03/10 (github.com/Tianrun-Yu/LARK, commit 38cfd4f): công thức này trùng
+    với lark/train/train_full.py, bản tinh chỉnh toàn bộ tham số mà tài liệu của họ ghi là dùng cho kết quả
+    chính: trọng số của mẫu được gán cho từng token rồi chia cho tổng trọng số của các token có nhãn. Bản LoRA
+    của họ (lark/train/train_lora.py) làm khác: lấy trung bình theo token trong từng mẫu trước, rồi mới lấy
+    trung bình có trọng số giữa các mẫu. Khác biệt còn lại so với train_full.py: họ chia mẫu số trong từng lô
+    nhỏ (một chuỗi đã ghép nhiều mẫu), còn ở đây chia trên cả lô hiệu dụng.
   - Mẫu số lấy trên CẢ lô hiệu dụng (batch_size x grad_accum mẫu), tính trước khi chạy, nên tích luỹ gradient cho
     đúng gradient của một lô lớn thật. Hệ quả: cách chia 16 mẫu của một lô hiệu dụng thành các lô nhỏ không làm
     đổi gradient. Mã dùng điều đó để ghép các mẫu gần độ dài vào cùng lô nhỏ, bớt phần đệm mà không đổi gì về
@@ -497,7 +503,7 @@ def selftest() -> int:
             ids, mask, labels, w = to_tensors(pad_batch(group[k:k + bs], 0), "cpu")
             part = weighted_chunked_loss(net, ids, mask, labels, w, chunk) / denom
             part.backward()
-            total += float(part)
+            total += float(part.detach())
         return total, net.lm_head.weight.grad.clone()
 
     net.zero_grad()

@@ -125,8 +125,9 @@ class ChatClient:
 
     # ---- một lượt gọi, chưa thử lại
     def _once(self, model: str, messages: Sequence[Mapping], temperature: float, top_p: float,
-              max_tokens: int, provider_order: Sequence[str] | None) -> ChatResult:
-        extra: dict = {}
+              max_tokens: int, provider_order: Sequence[str] | None,
+              extra_body: Mapping | None = None) -> ChatResult:
+        extra: dict = dict(extra_body or {})     # ví dụ {"reasoning": {"enabled": False}} để tắt chế độ suy nghĩ
         if self.request_usage_cost:
             extra["usage"] = {"include": True}
         if provider_order:
@@ -166,7 +167,8 @@ class ChatClient:
 
     # ---- có thử lại
     def chat(self, model: str, messages: Sequence[Mapping], temperature: float, top_p: float,
-             max_tokens: int, provider_order: Sequence[str] | None = None) -> ChatResult:
+             max_tokens: int, provider_order: Sequence[str] | None = None,
+             extra_body: Mapping | None = None) -> ChatResult:
         max_attempts = self.max_attempts
 
         def stop(state: RetryCallState) -> bool:
@@ -186,7 +188,8 @@ class ChatClient:
             for attempt in retrying:
                 with attempt:
                     try:
-                        result = self._once(model, messages, temperature, top_p, max_tokens, provider_order)
+                        result = self._once(model, messages, temperature, top_p, max_tokens, provider_order,
+                                            extra_body)
                     except BaseException as exc:
                         self.tracker.add_attempt_error(exc)
                         raise

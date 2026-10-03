@@ -63,6 +63,11 @@ python -m pytest tests/stage_a -q  # chỉ một nhóm
   `python -m src.stage_b.b3_train --selftest`, chạy trên máy có torch.
 
 ## tools/
+- **test_segment_steps.py** (thêm 03/10) — công cụ cắt bước bằng GLM-4.5-Air cho Local Naturalness đúng bài gốc.
+  Mô hình được thay bằng bản giả. Giữ các điều sau: ranh giới bước được áp lên văn bản GỐC nên các bước luôn phủ
+  kín chuỗi, kể cả khi mô hình bỏ sót hoặc viết lại câu; LaTeX chép với một dấu gạch chéo (JSON hỏng) vẫn định vị
+  được; ký hiệu mở đầu như `\[` đi cùng bước của nó; lô thử rút mẫu cố định, tắt chế độ suy nghĩ, chạy lại không
+  gọi thêm; chạy toàn bộ bắt buộc có `--max-cost`; file lời nhắc còn là chỗ giữ chỗ thì dừng.
 
 - **test_api_tool.py** — đếm đúng số mô hình lỗi, cảnh báo khi không có `\boxed`.
 - **test_convert_old_pilot.py** — giữ nguyên qid, ba tình huống lỗi.
