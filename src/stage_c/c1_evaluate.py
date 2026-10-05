@@ -28,8 +28,13 @@ nhiên khác so với sinh một mạch.
 Adapter KHÔNG được gộp vào trọng số nền. Trọng số nền ở bfloat16 chỉ có 8 bit phần định trị, cộng phần hiệu chỉnh
 nhỏ của LoRA vào đó sẽ làm tròn mất một phần của nó; giữ adapter rời thì phép tính giống hệt lúc huấn luyện.
 
-Chạy lại được: mỗi khối câu xong là ghi ngay; chạy lại lệnh thì bỏ qua các lượt đã có. Seed của từng khối cố định
-theo vị trí của khối, nên chạy một mạch hay chạy nối đều cho cùng kết quả.
+Chạy lại được: mỗi khối eval.chunk lượt xong là ghi ngay; chạy lại lệnh thì bỏ qua các lượt đã có. Seed của từng
+khối cố định theo vị trí của khối, nên chạy một mạch hay chạy nối đều cho cùng kết quả. Khối lớn thì các giai đoạn
+sau gom được đủ lượt cho một lô đầy; khối nhỏ thì ghi file thường xuyên hơn.
+
+Đo ngày 04/10 trên RTX 3060 (64 câu MATH-500, lô 64/32/16, khối 256): 224 token/giây, khoảng 90 mili giây mỗi bước
+sinh bất kể cỡ lô. Thời gian mỗi bước do phần cố định chi phối, nên tốc độ gần như tỷ lệ với số lượt còn đang sinh
+trong lô: lô càng đầy càng nhanh. Dòng tiến độ in số mili giây mỗi bước của từng giai đoạn để chỉnh eval.gen_batch.
 """
 from __future__ import annotations
 
@@ -51,7 +56,6 @@ from src.stage_c import metrics
 from src.stage_c.c0_prepare_eval import file_md5, sample_per_subset
 
 VAL = "val"                      # tập kiểm định chọn lambda, đọc từ data/raw chứ không từ data/eval
-CHUNK = 256                      # số lượt sinh mỗi khối; khối là đơn vị ghi file và đơn vị chạy lại
 
 
 # ============================================================ phần thuần
@@ -90,7 +94,8 @@ def work_items(questions: Sequence[Mapping], n_samples: int) -> list[tuple[str, 
     return [(q["qid"], s) for q in questions for s in range(n_samples)]
 
 
-def chunks(items: Sequence, size: int = CHUNK) -> list[list]:
+def chunks(items: Sequence, size: int) -> list[list]:
+    """Cắt danh sách lượt sinh thành các khối. Khối là đơn vị ghi file và đơn vị chạy lại (eval.chunk)."""
     return [list(items[i:i + size]) for i in range(0, len(items), size)]
 
 
@@ -225,25 +230,40 @@ def _generate_batch(model, tok, seqs: Sequence[Sequence[int]], max_new: int, sto
 
 
 def generate_staged(model, tok, prompts: Sequence[Sequence[int]], plan: Sequence[tuple[int, int]], stops: Sequence[int],
-                    ev: Mapping, seed: int) -> tuple[list[dict], dict]:
-    """Sinh cho mọi đề theo từng giai đoạn. Trả về (mỗi đề: token đã sinh và có dừng hay không; số liệu của khối)."""
+                    ev: Mapping, seed: int, log=None) -> tuple[list[dict], dict]:
+    """Sinh cho mọi đề theo từng giai đoạn. Trả về (mỗi đề: token đã sinh và có dừng hay không; số liệu của khối).
+    stats["stages"] ghi cho từng giai đoạn: số lượt vào, số bước sinh, số token, số giây."""
     state = [{"tokens": [], "stopped": False} for _ in prompts]
-    stats = {"steps": 0, "oom_splits": 0, "per_stage": []}
+    stats = {"steps": 0, "oom_splits": 0, "per_stage": [], "stages": []}
     prev = 0
     for stage, (cap, batch) in enumerate(plan):
         todo = sorted((i for i, s in enumerate(state) if not s["stopped"]),
                       key=lambda i: -(len(prompts[i]) + len(state[i]["tokens"])))
         stats["per_stage"].append(len(todo))
+        rec = {"cap": cap, "batch": batch, "rows": len(todo), "steps": 0, "tokens": 0, "seconds": 0.0}
+        n_batches = -(-len(todo) // batch)
         for b in range(0, len(todo), batch):
             idx = todo[b:b + batch]
+            t0 = time.perf_counter()
             new_rows, splits = _generate_batch(model, tok, [list(prompts[i]) + state[i]["tokens"] for i in idx],
                                                cap - prev, stops, ev, seed * 100_003 + stage * 1_009 + b)
+            took, steps, kept_total = time.perf_counter() - t0, max(len(r) for r in new_rows), 0
             stats["oom_splits"] += splits
-            stats["steps"] += max(len(r) for r in new_rows)
             for i, row in zip(idx, new_rows):
                 kept, stop = b3.split_at_stop(row, stops)
                 state[i]["tokens"] += kept
                 state[i]["stopped"] = stop is not None
+                kept_total += len(kept)
+            rec["steps"] += steps
+            rec["tokens"] += kept_total
+            rec["seconds"] += took
+            if log:
+                log(f"[c1]   giai đoạn {stage + 1} (tới {cap} token), lô {b // batch + 1}/{n_batches}: {len(idx)} lượt, "
+                    f"{steps} bước trong {took:.0f} giây ({1000 * took / max(steps, 1):.0f} ms mỗi bước), "
+                    f"{sum(not state[i]['stopped'] for i in idx)} lượt chưa dừng"
+                    + (f", phải chia lô {splits} lần vì hết bộ nhớ" if splits else ""))
+        stats["steps"] += rec["steps"]
+        stats["stages"].append(rec)
         prev = cap
     return state, stats
 
@@ -255,9 +275,9 @@ def evaluate_benchmark(model, tok, cfg: Mapping, bench: str, questions: Sequence
     plan = stage_plan(ev["stage_tokens"], ev["gen_batch"], int(ev["max_new_tokens"]))
     by_qid = {q["qid"]: q for q in questions}
     done = {(r["qid"], r["sample"]) for r in iter_jsonl(out_path)} if out_path.exists() else set()
-    todo = [(c, items) for c, items in enumerate(chunks(work_items(questions, int(ev["n_samples"]))))
+    todo = [(c, items) for c, items in enumerate(chunks(work_items(questions, int(ev["n_samples"])), int(ev["chunk"])))
             if any(it not in done for it in items)]
-    timing = {"seconds": 0.0, "new_tokens": 0, "generations": 0, "oom_splits": 0, "steps": 0}
+    timing = {"seconds": 0.0, "new_tokens": 0, "generations": 0, "oom_splits": 0, "steps": 0, "stages": []}
     if not todo:
         return timing
     prompt_ids = {}
@@ -269,7 +289,7 @@ def evaluate_benchmark(model, tok, cfg: Mapping, bench: str, questions: Sequence
             items = [it for it in items if it not in done]
             t0 = time.perf_counter()
             state, stats = generate_staged(model, tok, [prompt_ids[q] for q, _s in items], plan, stops, ev,
-                                           int(ev["seed"]) * 7919 + c)
+                                           int(ev["seed"]) * 7919 + c, log)
             took = time.perf_counter() - t0
             for (qid, sample), st in zip(items, state):
                 text = tok.decode(st["tokens"], skip_special_tokens=True)
@@ -283,6 +303,12 @@ def evaluate_benchmark(model, tok, cfg: Mapping, bench: str, questions: Sequence
             timing["generations"] += len(items)
             timing["oom_splits"] += stats["oom_splits"]
             timing["steps"] += stats["steps"]
+            for j, rec in enumerate(stats["stages"]):               # cộng dồn số liệu từng giai đoạn qua các khối
+                if j == len(timing["stages"]):
+                    timing["stages"].append(dict(rec))
+                else:
+                    for key in ("rows", "steps", "tokens", "seconds"):
+                        timing["stages"][j][key] += rec[key]
             left = (len(todo) - n_done) * timing["seconds"] / n_done
             log(f"[c1] {bench}: khối {n_done}/{len(todo)} | {len(items)} lượt, số lượt vào từng giai đoạn "
                 f"{stats['per_stage']}, {new} token trong {took:.0f} giây | "
@@ -347,7 +373,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                    train_commit=info.get("git_commit"), eval_commit=git_commit(Path(cfg.root)),
                    stop_tokens=tok.convert_ids_to_tokens(stops),
                    settings={key: ev[key] for key in ("n_samples", "temperature", "top_p", "top_k", "max_new_tokens",
-                                                      "seed", "stage_tokens", "gen_batch", "bbh_per_task")})
+                                                      "seed", "stage_tokens", "gen_batch", "chunk", "bbh_per_task")})
     for bench, questions in data.items():
         path = out_dir / f"{bench}.jsonl"
         if args.force and path.exists():
@@ -359,6 +385,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         res["tokens_per_second"] = round(timing["new_tokens"] / timing["seconds"], 1) if timing["seconds"] \
             else prev.get("tokens_per_second")
         res["oom_splits"] = timing["oom_splits"]
+        if timing["stages"]:
+            res["stages"] = [{**r, "seconds": round(r["seconds"], 1),
+                              "ms_per_step": round(1000 * r["seconds"] / max(r["steps"], 1), 1)} for r in timing["stages"]]
+            print("[c1]   theo giai đoạn: " + " | ".join(
+                f"tới {r['cap']} (lô {r['batch']}): {r['rows']} lượt, {r['steps']} bước, {r['seconds'] / 60:.1f} phút, "
+                f"{r['ms_per_step']:.0f} ms mỗi bước" for r in res["stages"]))
         res["finished"] = now_iso()
         summary["benchmarks"][bench] = res
         if args.device == "cuda":
@@ -368,7 +400,8 @@ def main(argv: Sequence[str] | None = None) -> int:
               + f" | {res['n_questions']} câu | trung bình {res['mean_new_tokens']:.0f} token, dừng "
               f"{100 * res['stopped_share']:.0f}%, chạm trần {100 * res['hit_cap_share']:.0f}%, không có \\boxed "
               f"{100 * res['no_boxed_share']:.0f}% | {res['seconds'] / 60:.1f} phút"
-              + (f", {res['tokens_per_second']:.0f} token/giây" if res["tokens_per_second"] else ""))
+              + (f", {res['tokens_per_second']:.0f} token/giây" if res["tokens_per_second"] else "")
+              + (f" | đỉnh bộ nhớ giữ chỗ {summary['peak_reserved_gb']} GB" if "peak_reserved_gb" in summary else ""))
     print(f"[c1] kết quả ở {out_dir}")
     return 0
 

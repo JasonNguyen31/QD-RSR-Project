@@ -64,8 +64,9 @@ def test_work_is_cut_into_fixed_chunks_in_question_order():
     qs = [{"qid": f"q{i}"} for i in range(70)]
     items = c1.work_items(qs, 4)
     assert items[:5] == [("q0", 0), ("q0", 1), ("q0", 2), ("q0", 3), ("q1", 0)] and len(items) == 280
-    parts = c1.chunks(items)
+    parts = c1.chunks(items, 256)
     assert [len(p) for p in parts] == [256, 24] and sum(parts, []) == items
+    assert load_config(method="correct_only", student="qwen1_5b")["eval"]["chunk"] >= 256
 
 
 # ---------------------------------------------------------------- chấm

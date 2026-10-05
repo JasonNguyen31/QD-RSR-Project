@@ -152,6 +152,7 @@ eval:
   # với lô nhỏ hơn, mốc cuối là max_new_tokens. gen_batch có một cỡ lô cho mỗi mốc. [TẠM] chỉnh sau khi đo trên GPU.
   stage_tokens: [512, 1536]
   gen_batch: [64, 32, 16]
+  chunk: 1024                   # số lượt sinh mỗi khối: đơn vị ghi file và chạy lại; khối lớn thì giai đoạn sau đủ lượt cho lô đầy
 
 signals:
   # Local Naturalness (Just 2025, phương trình 2): mỗi câu được chấm khi mô hình chỉ thấy đề bài và tối đa
