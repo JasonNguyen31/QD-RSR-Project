@@ -62,7 +62,27 @@ python -m pytest tests/stage_a -q  # chỉ một nhóm
   Phần toán của mất mát (tích luỹ gradient bằng đúng một lô lớn, trọng số mẫu) cần torch nên nằm trong
   `python -m src.stage_b.b3_train --selftest`, chạy trên máy có torch.
 
+- **stage_b/test_steps.py** (thêm 05/10): các bước cuối cùng của LocalNat, dựng từ `steps.glm.jsonl` lúc đọc.
+  Giữ các điều sau: ranh giới đứng ngay sau dấu đầu dòng (`1.`, `-`, `(a)`, `###`, `Step 2:`) lùi về đầu dòng còn
+  ranh giới sau một câu thật thì không; ranh giới giữa dòng dời về trước dấu cách để chữ đầu của bước thuộc đúng
+  bước đó; bước chỉ gồm dấu đầu dòng được gộp chứ không để lại; phản hồi mà `json.loads` không đọc nổi (dấu nháy
+  không thoát, xuống dòng thật, bị cắt gần cuối) vẫn cứu được, còn phản hồi viết lại hoặc chỉ phủ nửa chuỗi thì
+  bị từ chối và chuyển sang cắt dự phòng; các bước luôn phủ kín văn bản gốc; dòng nhật ký không bị sửa.
+- **stage_b/test_b1_localnat.py** (thêm 05/10): chấm LocalNat cho nhiều k trong một lượt. Phần chạy mô hình dùng
+  một mô hình Qwen2 tí hon khởi tạo ngẫu nhiên trên CPU và tokenizer giả, không tải gì từ mạng; máy không có torch
+  thì các bài đó tự bỏ qua. Giữ các điều sau: mục trùng giữa các k chỉ chạy một lần mà điểm từng k vẫn khớp cách
+  chạy riêng từng mục; cỡ lô và ngân sách bộ nhớ không đổi điểm; ngữ cảnh đầy đủ gộp theo token bằng log xác suất
+  của cả chuỗi (GRAPE); dừng khi còn chuỗi chưa cắt bước hoặc quá nhiều chuỗi phải cắt dự phòng; chạy bù không
+  lẫn bộ k hay mô hình khác; file fit không bị đụng tới. Trên GPU thật: `python -m src.stage_b.b1_localnat --selftest`.
+
 ## tools/
+- **test_audit_steps.py**, **test_compare_localnat.py** (thêm 05/10): hai công cụ đọc cho LocalNat. `audit_steps`
+  đếm đúng loại ranh giới, nguồn bước, chuỗi hỏng thuộc câu chỉ có đúng k ứng viên, và không ghi gì ra đĩa.
+  `compare_localnat` phải lộ ra trường hợp LocalNat chỉ là bản chép của GRAPE (tương quan 1, cùng tập top-k).
+- **test_eval_table.py** (thêm 05/10): bảng so sánh từ `summary.json`. Giữ các điều sau: bỏ qua thư mục
+  `.limitN` của phép đo tốc độ; ô là trung bình và độ lệch chuẩn MẪU qua các seed; cột trung bình tầng 1 chỉ in khi
+  đủ bốn bộ; phép so ghép cặp chỉ dùng seed chung và phân biệt được mức tăng nhất quán với nhiễu; cài đặt đánh giá
+  lệch nhau, bộ thiếu, số seed lệch đều được nêu ra thay vì âm thầm so.
 - **test_segment_steps.py** (thêm 03/10) — công cụ cắt bước bằng GLM-4.5-Air cho Local Naturalness đúng bài gốc.
   Mô hình được thay bằng bản giả. Giữ các điều sau: ranh giới bước được áp lên văn bản GỐC nên các bước luôn phủ
   kín chuỗi, kể cả khi mô hình bỏ sót hoặc viết lại câu; LaTeX chép với một dấu gạch chéo (JSON hỏng) vẫn định vị
