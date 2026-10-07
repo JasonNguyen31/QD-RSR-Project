@@ -238,3 +238,27 @@ def test_full_run_writes_one_row_per_chain_resumes_and_keeps_the_fit_file_untouc
     assert "local_nat_k4 trên" in capsys.readouterr().out
     with pytest.raises(SystemExit, match="cài đặt khác"):                  # đổi bộ k rồi chạy bù lên file cũ
         ln.main(args + ["--local-k", "1", "2"])
+
+
+def test_float32_check_separates_numeric_noise_from_a_batching_bug_and_restores_the_weights(tiny, monkeypatch):
+    """Phép kiểm thêm sau lần tự kiểm hỏng ngày 05/10 trên GPU: ở bfloat16 điểm từng mục lệch theo lô, nên phép so
+    lô nhỏ với lô lớn theo từng mục phải làm ở float32, và mô hình phải trở lại đúng kiểu số cũ sau khi đo."""
+    torch, model = tiny
+    p_ids, r_ids, steps = random_chain(seed=11)
+    items, _ = ln.unique_items(steps, [1, 4])
+    half = model.to(torch.bfloat16)
+    try:
+        before = {k: v.clone() for k, v in half.state_dict().items()}
+        gap = ln.float32_batch_gap(half, p_ids, r_ids, items)
+        assert gap is not None and gap < 2e-3                              # chia lô đúng: ở float32 khớp tới phần nghìn
+        assert next(half.parameters()).dtype == torch.bfloat16            # kiểu số được trả lại
+        assert all(torch.equal(v, half.state_dict()[k]) for k, v in before.items())   # trọng số không đổi một bit nào
+
+        real = ln._score_batch
+        monkeypatch.setattr(ln, "_score_batch", lambda m, p, r, batch, hc: [v + 0.01 * len(batch) for v in real(m, p, r, batch, hc)])
+        assert ln.float32_batch_gap(half, p_ids, r_ids, items) > 2e-3      # điểm phụ thuộc cỡ lô: phép kiểm phải bắt được
+        monkeypatch.setattr(ln, "_score_batch", lambda *a: (_ for _ in ()).throw(RuntimeError("hết bộ nhớ giả")))
+        assert ln.float32_batch_gap(half, p_ids, r_ids, items) is None     # không đo được thì báo None, không sập
+        assert next(half.parameters()).dtype == torch.bfloat16
+    finally:
+        model.float()

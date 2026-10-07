@@ -239,9 +239,39 @@ def score_chain(model, tok, question: str, text: str, ends: Sequence[int], ks: S
 
 
 # ============================================================ kiểm chứng trên GPU, không cần dữ liệu
+def float32_batch_gap(model, p_ids, r_ids, items) -> float | None:
+    """Lệch lớn nhất theo từng mục giữa lô lớn và lô 2 khi mô hình tạm chuyển sang float32.
+
+    Ở bfloat16, cùng một mục cho điểm hơi khác nhau khi nằm trong lô khác (độ rộng đệm và mặt nạ khác làm đường
+    tính attention khác). Chạy lại đúng phép so đó ở float32 để tách hai khả năng: nếu là nhiễu số học thì ở
+    float32 hai cách phải khớp tới phần nghìn; nếu là lỗi chia lô thì vẫn lệch. Trọng số được trả về đúng kiểu
+    cũ sau khi đo (bfloat16 sang float32 rồi về lại không mất gì). Trả về None khi không đo được (thiếu bộ nhớ,
+    hoặc mô hình nạp 4-bit không đổi kiểu được).
+    """
+    import torch
+
+    dtype = next(model.parameters()).dtype
+    try:
+        model.float()
+        a, _ = step_logprob_means(model, p_ids, r_ids, items)
+        b, _ = step_logprob_means(model, p_ids, r_ids, items, max_batch=2)
+        return max(abs(x - y) for x, y in zip(a, b))
+    except (torch.OutOfMemoryError, ValueError, RuntimeError, TypeError):
+        return None
+    finally:
+        try:
+            model.to(dtype)
+        except (ValueError, RuntimeError, TypeError):
+            pass
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
 def selftest(model, tok, max_len: int, chunk: int) -> int:
-    """So với cài đặt đã kiểm của b1_fit trên cùng một chuỗi. Sai số cho phép 0,02 là mức nhiễu bfloat16 mà
-    b1_fit --selftest vẫn dùng."""
+    """So với cài đặt đã kiểm của b1_fit trên cùng một chuỗi. Sai số cho phép 0,02 ở mức ĐIỂM CỦA CHUỖI là mức
+    nhiễu bfloat16 mà b1_fit --selftest vẫn dùng. Điểm của từng mục riêng lẻ (một bước, vài chục token) dao động
+    nhiều hơn điểm của chuỗi, nên phép so lô nhỏ với lô lớn theo từng mục được làm ở float32 (float32_batch_gap);
+    lần chạy 05/10 hỏng đúng ở chỗ áp ngưỡng 0,02 cho từng mục ở bfloat16."""
     from src.stage_b import b1_fit as b1
     from src.stage_b.signals import sentence_ends
 
@@ -257,6 +287,8 @@ def selftest(model, tok, max_len: int, chunk: int) -> int:
     means, _ = step_logprob_means(model, p_ids, r_ids, items)
     multi = combine(means, index)
     small, _ = step_logprob_means(model, p_ids, r_ids, items, max_batch=2)
+    small_multi = combine(small, index)
+    item_gap = max(abs(a - b) for a, b in zip(means, small))
     old = {k: b1.local_naturalness(model, p_ids, r_ids, steps, k) for k in ks}
     naive = {k: b1.local_naturalness_naive(model, p_ids, r_ids, steps, k) for k in ks}
 
@@ -275,11 +307,17 @@ def selftest(model, tok, max_len: int, chunk: int) -> int:
     cut = text.index("\n\n") + 2
     two = score_chain(model, tok, q, text, [cut, len(text)], ks, max_len)
 
+    f32_gap = float32_batch_gap(model, p_ids, r_ids, items)             # làm sau cùng: tạm đổi kiểu số của mô hình
+    f32_tol, loose_tol = 2e-3, 0.1
+
     print(f"\n{len(steps)} bước theo dấu câu, {len(items)} mục khác nhau cho k = 1 và 4 (thay vì {2 * len(steps)})")
     for k in ks:
         print(f"k = {k}: lượt gộp {multi[k]:.4f} | b1_fit theo lô {old[k]:.4f} | từng mục {naive[k]:.4f}")
     print(f"GRAPE {grape:.4f} | ngữ cảnh đầy đủ, gộp theo token {by_token:.4f} | một bước {one[column(1)]:.4f} | "
           f"hai bước k = 1: {two[column(1)]:.4f}")
+    print("lô 32 so với lô 2: " + ", ".join(f"k = {k} lệch {abs(multi[k] - small_multi[k]):.4f}" for k in ks)
+          + f" | lệch lớn nhất theo từng mục: bfloat16 {item_gap:.4f}, float32 "
+          + (f"{f32_gap:.6f}" if f32_gap is not None else "không đo được"))
 
     tol = 0.02
     checks = [
@@ -288,7 +326,11 @@ def selftest(model, tok, max_len: int, chunk: int) -> int:
         ("các mục trùng giữa k = 1 và k = 4 chỉ chạy một lần", len(items) < 2 * len(steps)),
         ("lượt gộp nhiều k khớp b1_fit.local_naturalness ở từng k", all(abs(multi[k] - old[k]) < tol for k in ks)),
         ("lượt gộp nhiều k khớp cách chạy riêng từng mục", all(abs(multi[k] - naive[k]) < tol for k in ks)),
-        ("lô nhỏ và lô lớn cho cùng điểm", max(abs(a - b) for a, b in zip(means, small)) < tol),
+        ("lô nhỏ và lô lớn cho cùng điểm của chuỗi ở từng k", all(abs(multi[k] - small_multi[k]) < tol for k in ks)),
+        ("lô nhỏ và lô lớn khớp theo từng mục khi tính ở float32, tức chênh lệch ở bfloat16 là nhiễu số học"
+         if f32_gap is not None else
+         f"không đo được ở float32; lệch theo từng mục ở bfloat16 phải dưới {loose_tol}",
+         f32_gap < f32_tol if f32_gap is not None else item_gap < loose_tol),
         ("k = 1 và k = 4 cho điểm khác nhau trên chuỗi nhiều bước", abs(multi[1] - multi[4]) > 1e-4),
         ("ngữ cảnh đầy đủ, gộp lại theo token, bằng GRAPE", abs(by_token - grape) < tol),
         ("chuỗi một bước: LocalNat bằng GRAPE ở mọi k",
