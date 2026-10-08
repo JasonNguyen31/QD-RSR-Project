@@ -22,10 +22,15 @@ Ghi  data/stage_b/<student>_base/train.<tên>.jsonl    một dòng mỗi chuỗi
 Tên file do selection_tag quyết định: <phương án>.k<k>, thêm .lam<λ> khi tập chọn phụ thuộc λ. b3_train phải
 gọi đúng hàm đó để không đọc nhầm file của một λ cũ.
 
-Ba quy tắc chọn (khoá select.rule trong configs/method và configs/ablation):
+Bốn quy tắc chọn (khoá select.rule trong configs/method và configs/ablation):
     random     k chuỗi đầu theo thứ tự cố định (xem dưới). Correct-Only, No-Filter.
     topk       k chuỗi đứng đầu theo một tín hiệu. CHỈ RSR LÀ CỰC TIỂU, chiều lấy từ signal_direction.
     objective  duyệt hết mọi tập con cỡ k, lấy tập tối đa hoá F(S) = Σ Fit^a·Qual^b + λ·Div(S) (objective.py).
+    teacher    (thêm 08/10) rút ngẫu nhiên như random, nhưng xếp chuỗi theo MÔ HÌNH DẠY trước: các mô hình trong
+               select.prefer đứng đầu, các mô hình trong select.avoid đứng cuối. Không dùng tín hiệu nào của mô
+               hình học. Đây là phép ĐỐI CHỨNG, không phải phương án: nó trả lời câu hỏi "một tín hiệu thắng vì
+               bản thân tín hiệu, hay vì nó chọn chuỗi của mô hình dạy nào". File cấu hình của phép đối chứng
+               mang khoá select.control: true và không nằm trong --all.
 
 Các quy ước đã chốt mà mã này thực thi:
   - Chuỗi không có điểm giám khảo (qual = null trong quality.jsonl) bị loại khỏi kho của MỌI phương án, kể cả
@@ -226,6 +231,32 @@ def pick_topk(scores: np.ndarray, k: int, direction: str) -> dict:
     return {"idx": sorted(order[:k]), "tie": bool(len(s) > k and s[order[k - 1]] == s[order[k]])}
 
 
+def pick_teacher(teachers: Sequence[str], k: int, prefer: Sequence[str] = (), avoid: Sequence[str] = ()) -> dict:
+    """k chuỗi đầu sau khi xếp theo nhóm mô hình dạy: prefer trước, rồi các mô hình còn lại, avoid sau cùng.
+
+    Trong mỗi nhóm giữ nguyên thứ tự cố định sẵn có (sắp xếp ổn định), tức rút ngẫu nhiên trong nhóm. Câu hỏi
+    không đủ k chuỗi thuộc nhóm đứng đầu thì lấy tiếp từ nhóm sau, nên luôn ra đúng k chuỗi.
+    """
+    def group(t: str) -> int:
+        return 0 if t in prefer else (2 if t in avoid else 1)
+    order = sorted(range(len(teachers)), key=lambda i: group(teachers[i]))
+    return {"idx": sorted(order[:k]), "tie": False}
+
+
+def teacher_lists(cfg: Mapping) -> tuple[list[str], list[str]]:
+    """Đọc và kiểm select.prefer, select.avoid của quy tắc teacher."""
+    spec = cfg["select"]
+    prefer, avoid = list(spec.get("prefer") or []), list(spec.get("avoid") or [])
+    known = {t["key"] for t in cfg["teachers"]}
+    if not prefer and not avoid:
+        raise SystemExit(f"Phương án {spec['name']}: quy tắc teacher cần select.prefer hoặc select.avoid.")
+    unknown = sorted((set(prefer) | set(avoid)) - known)
+    if unknown or set(prefer) & set(avoid):
+        raise SystemExit(f"Phương án {spec['name']}: prefer {prefer}, avoid {avoid} không hợp lệ; các mô hình dạy "
+                         f"đang có là {sorted(known)}, và một mô hình không được nằm ở cả hai danh sách.")
+    return prefer, avoid
+
+
 def greedy_set(per: np.ndarray, dist: np.ndarray, k: int, lam: float) -> list[int]:
     """Tham lam theo độ lợi biên của F, bắt đầu từ chuỗi có Fit^a·Qual^b lớn nhất. Chỉ để phân tích phụ."""
     chosen = [int(np.argmax(per))]
@@ -260,6 +291,7 @@ def select_all(questions: Mapping[str, Mapping], cfg: Mapping) -> dict:
     """Chạy quy tắc của cfg trên mọi câu hỏi. Trả về qid -> {idx, weights, tie, ...}."""
     spec, sel = cfg["select"], cfg["selection"]
     k, rule = int(sel["k"]), spec["rule"]
+    prefer, avoid = teacher_lists(cfg) if rule == "teacher" else ([], [])
     picks = {}
     for qid, q in questions.items():
         if len(q["tids"]) < k:
@@ -275,8 +307,10 @@ def select_all(questions: Mapping[str, Mapping], cfg: Mapping) -> dict:
             p = pick_topk(q["signals"][col], k, signal_direction(cfg, name))
         elif rule == "objective":
             p = pick_objective(q, k, float(sel["a"]), float(sel["b"]), float(sel["lambda_div"]), sel["div_scale"])
+        elif rule == "teacher":
+            p = pick_teacher(q["teacher"], k, prefer, avoid)
         else:
-            raise SystemExit(f"select.rule không hợp lệ: {rule!r} (random, topk, objective)")
+            raise SystemExit(f"select.rule không hợp lệ: {rule!r} (random, topk, objective, teacher)")
         if spec.get("weights", "uniform") == "lark_soft":
             w = lark_weights([float(x) for x in q["signals"]["lark"]], k)
             if not {i for i, x in enumerate(w) if x > 0} <= set(p["idx"]):
@@ -456,6 +490,7 @@ def run_one(inp: Inputs, cfg: Mapping, outdir: Path) -> dict:
                "a": float(sel["a"]), "b": float(sel["b"]), "lambda_div": float(sel["lambda_div"]),
                "div_scale": sel["div_scale"], "random_seed": inp.seed, "fit_file": inp.fit_name,
                "student": cfg["student"]["base_model_id"], "blocked": spec.get("blocked"),
+               "prefer": spec.get("prefer"), "avoid": spec.get("avoid"), "control": bool(spec.get("control")),
                **summarize(questions, picks, k),
                "train_file": path.name, "md5": hashlib.md5(path.read_bytes()).hexdigest()}
     write_json(outdir / f"select.{tag}.json", summary)
@@ -480,10 +515,12 @@ def print_summary(s: Mapping) -> None:
 
 
 def method_list(cfg: Mapping, root: Path) -> list[tuple[str, str | None]]:
-    """(method, ablation) cho --all. Mô hình học có khoá methods thì chỉ chạy đúng các phương án đó."""
+    """(method, ablation) cho --all. Mô hình học có khoá methods thì chỉ chạy đúng các phương án đó.
+    Phép đối chứng (select.control: true) không nằm trong --all; gọi riêng bằng --method."""
     if "methods" in cfg:
         return [(m, None) for m in cfg["methods"]]
-    methods = sorted(p.stem for p in (root / "configs" / "method").glob("*.yaml"))
+    methods = sorted(p.stem for p in (root / "configs" / "method").glob("*.yaml")
+                     if not load_config(method=p.stem, root=root).get("select", {}).get("control"))
     ablations = sorted(p.stem for p in (root / "configs" / "ablation").glob("*.yaml"))
     return [(m, None) for m in methods] + [("qd_rsr", a) for a in ablations]
 

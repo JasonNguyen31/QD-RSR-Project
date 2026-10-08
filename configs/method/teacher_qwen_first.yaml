@@ -1,0 +1,14 @@
+# ĐỐI CHỨNG, không phải phương án (thêm 08/10/2026). Ưu tiên chuỗi của Qwen-72B, mô hình dạy cùng họ với mô
+# hình học; câu nào không đủ k chuỗi đúng của Qwen-72B thì lấy tiếp ngẫu nhiên từ hai mô hình dạy kia.
+# Không dùng tín hiệu nào của mô hình học.
+#
+# Vì sao có: ở seed 42, tập GRAPE có 75,3% chuỗi của Qwen-72B và đứng đầu (MATH-500 55,1), còn tập RSR có 2,2%
+# và đứng gần cuối (45,2). Phép này cùng teacher_qwen_last tách hai cách giải thích: tín hiệu thắng vì bản thân
+# nó, hay vì nó chọn chuỗi của mô hình dạy nào. Đây là phân tích bổ sung, nảy ra SAU khi thấy kết quả seed 42;
+# phải ghi rõ như vậy trong paper. Không nằm trong b2_select --all.
+select:
+  name: teacher_qwen_first
+  pool: correct
+  rule: teacher
+  prefer: [qwen72b]
+  control: true

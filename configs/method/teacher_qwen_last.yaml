@@ -1,0 +1,8 @@
+# ĐỐI CHỨNG, không phải phương án (thêm 08/10/2026). Tránh chuỗi của Qwen-72B: lấy ngẫu nhiên trong các chuỗi
+# đúng của hai mô hình dạy kia trước, chỉ dùng chuỗi của Qwen-72B khi không đủ k. Xem teacher_qwen_first.yaml.
+select:
+  name: teacher_qwen_last
+  pool: correct
+  rule: teacher
+  avoid: [qwen72b]
+  control: true
