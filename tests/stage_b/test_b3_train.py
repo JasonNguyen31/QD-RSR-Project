@@ -133,7 +133,7 @@ def seldir(tmp_path):
     make_workdir(work, n_q=20)
     out = tmp_path / "sel"
     for extra in (["--method", "correct_only"], ["--method", "lark"],
-                  ["--method", "local_naturalness", "--allow-blocked"]):
+                  ["--method", "grape", "--override", "select.blocked=chưa dùng được.", "--allow-blocked"]):
         assert b2.main(["--workdir", str(work), "--outdir", str(out)] + extra) == 0
     return out
 
@@ -151,7 +151,7 @@ def test_selection_is_loaded_with_weights_and_checked_against_its_md5(seldir):
 
 def test_blocked_or_missing_or_wrong_k_selection_is_refused(seldir):
     with pytest.raises(SystemExit, match="bị khoá"):
-        b3.load_selection(seldir, "local_naturalness.k3.tam", 3)
+        b3.load_selection(seldir, "grape.k3.tam", 3)
     with pytest.raises(SystemExit, match="Không thấy tập chọn"):
         b3.load_selection(seldir, "rsr.k3", 3)
     with pytest.raises(SystemExit, match="k = 1"):

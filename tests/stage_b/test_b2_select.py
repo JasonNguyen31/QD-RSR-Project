@@ -1,5 +1,6 @@
 """Kiểm thử b2_select. Dữ liệu giả dựng qua a4.combine (quality.jsonl) và b1_fit.aggregate (file fit), để tên
 khoá đúng như file thật: bài kiểm thử dùng dữ liệu giả sai giống mã thì lỗi lọt qua (bẫy hình A-8)."""
+import hashlib
 import ast
 import json
 import math
@@ -35,8 +36,9 @@ def _fit_row(tid, qid, model, rng, with_local=True):
     return {"tid": tid, "qid": qid, "model": model, "ts": "2026-10-02T00:00:00+00:00", **v}
 
 
-def make_workdir(tmp: Path, n_q=12, seed=0, model=None, with_local=True, unjudged=(), n_right=None):
-    """Kho thu nhỏ: mỗi câu 9 chuỗi (3 mô hình dạy x 3 mẫu). n_right[q] chuỗi đầu là đúng (mặc định 4 đến 9)."""
+def make_workdir(tmp: Path, n_q=12, seed=0, model=None, with_local=True, unjudged=(), n_right=None, localnat=True):
+    """Kho thu nhỏ: mỗi câu 9 chuỗi (3 mô hình dạy x 3 mẫu). n_right[q] chuỗi đầu là đúng (mặc định 4 đến 9).
+    localnat: có ghi file điểm LocalNat trên bước của GLM (như b1_localnat ghi) hay không."""
     rng = np.random.default_rng(seed)
     cfg = load_config(student="qwen1_5b")
     model = model or cfg.student.base_model_id
@@ -69,6 +71,13 @@ def make_workdir(tmp: Path, n_q=12, seed=0, model=None, with_local=True, unjudge
     write_jsonl(tmp / "quality.jsonl", quality)
     write_jsonl(tmp / "fit.qwen1_5b_base.jsonl", fit)
     np.savez_compressed(tmp / "embeddings.npz", tids=np.array([c["tid"] for c in cands]), vectors=vecs)
+    if localnat:
+        rng2 = np.random.default_rng(seed + 1000)          # bộ sinh riêng: không làm đổi dữ liệu giả của các file kia
+        write_jsonl(tmp / "localnat.qwen1_5b_base.glm.jsonl", [
+            {"tid": c["tid"], "qid": c["qid"], "model": model, "ts": "2026-10-11T00:00:00+00:00",
+             "local_nat_k1": float(-rng2.uniform(0.5, 3.0)), "local_nat_k4": float(-rng2.uniform(0.5, 3.0)),
+             "n_steps": 6, "steps_source": "fallback_paragraph" if i % 50 == 7 else "glm", "steps_version": 1,
+             "text_md5": hashlib.md5(c["text"].encode("utf-8")).hexdigest()} for i, c in enumerate(cands)])
     return cfg
 
 
@@ -97,7 +106,8 @@ def test_tag_carries_k_and_lambda_only_when_selection_depends_on_it():
     assert b2.selection_tag(_cfg(ablation="fit_quality")) == "fit_quality.k3"
     assert b2.selection_tag(_cfg(ablation="diversity_only")) == "diversity_only.k3"     # mọi λ > 0 như nhau
     assert b2.selection_tag(_cfg(overrides=["selection.k=1"])) == "qd_rsr.k1"           # k = 1 thì Div = 0
-    assert b2.selection_tag(_cfg("local_naturalness")) == "local_naturalness.k3.tam"    # đang bị khoá
+    assert b2.selection_tag(_cfg("local_naturalness")) == "local_naturalness.k3"        # mở khoá 11/10
+    assert b2.selection_tag(_cfg("grape", overrides=["select.blocked=chưa dùng được"])) == "grape.k3.tam"
 
 
 def test_order_uses_hashlib_never_the_builtin_hash():
@@ -195,10 +205,11 @@ def test_inputs_refuse_fit_file_of_another_model_or_old_definition(tmp_path):
 # ---------------------------------------------------------------- chiều tối ưu: chỗ dễ nhầm nhất
 def test_rsr_takes_the_lowest_and_every_other_signal_the_highest(inp):
     for method, col, lowest in (("rsr", "rsr", True), ("grape", "grape", False),
-                                ("local_naturalness", "local_nat", False), ("token_length", "n_tokens", False)):
+                                ("local_naturalness", "local_nat_k1", False), ("token_length", "n_tokens", False)):
         qs, picked, _ = _picked(inp, _cfg(method))
+        source = inp.localnat if col.startswith("local_nat_k") else inp.fit     # LocalNat đọc từ file điểm riêng
         for qid, q in qs.items():
-            vals = {t: inp.fit[t][col] for t in q["tids"]}
+            vals = {t: source[t][col] for t in q["tids"]}
             ranked = sorted(vals.values(), reverse=not lowest)[:3]
             assert sorted((vals[t] for t in picked[qid]), reverse=not lowest) == ranked, (method, qid)
 
@@ -326,10 +337,10 @@ def test_lark_ghat_is_recomputed_on_the_usable_pool_and_weights_average_one(tmp_
     assert all(p["weights"] == [1.0, 1.0, 1.0] for p in _picked(inp, _cfg("rsr"))[2].values())
 
 
-def test_local_naturalness_fails_clearly_on_a_fit_file_without_it(tmp_path):
-    cfg = make_workdir(tmp_path, with_local=False)
+def test_local_naturalness_fails_clearly_without_its_score_file(tmp_path):
+    cfg = make_workdir(tmp_path, with_local=False, localnat=False)
     inp = b2.Inputs(cfg, tmp_path, "fit.qwen1_5b_base.jsonl")
-    with pytest.raises(SystemExit, match="local_nat"):
+    with pytest.raises(SystemExit, match="local_nat_k1"):
         _picked(inp, _cfg("local_naturalness"))
     assert _picked(inp, _cfg("rsr"))[1]                       # các phương án khác vẫn chạy
 
@@ -342,9 +353,9 @@ def test_all_writes_one_shared_question_set_with_k_rows_each(tmp_path, capsys):
     code = b2.main(["--workdir", str(work), "--outdir", str(out), "--all", "--expect-questions", "30"])
     printed = capsys.readouterr().out
     assert code == 1 and "CHƯA CHẠY ĐƯỢC no_prefilter" in printed          # chưa chấm bù chuỗi sai
-    assert "CHƯA CHẠY ĐƯỢC local_naturalness.k3.tam" in printed            # bị khoá cho tới khi làm đúng bài gốc
+    assert "CHƯA CHẠY ĐƯỢC local_naturalness" not in printed               # đã có điểm trên bước của GLM
     files = sorted(out.glob("train.*.jsonl"))
-    assert len(files) == 12
+    assert len(files) == 13 and (out / "train.local_naturalness.k3.jsonl").exists()
     qsets = set()
     for f in files:
         rows = read_jsonl(f)
@@ -369,13 +380,13 @@ def test_blocked_method_needs_an_explicit_flag_and_gets_a_tam_name(tmp_path):
     work, out = tmp_path / "a", tmp_path / "out"
     work.mkdir()
     make_workdir(work)
+    locked = ["--method", "grape", "--override", "select.blocked=chưa dùng được."]   # không phương án nào còn bị khoá sẵn
     with pytest.raises(SystemExit, match="đang bị khoá"):
-        b2.main(["--workdir", str(work), "--outdir", str(out), "--method", "local_naturalness"])
+        b2.main(["--workdir", str(work), "--outdir", str(out)] + locked)
     assert not list(out.glob("train.*"))
-    assert b2.main(["--workdir", str(work), "--outdir", str(out), "--method", "local_naturalness",
-                    "--allow-blocked"]) == 0
-    assert [p.name for p in out.glob("train.*")] == ["train.local_naturalness.k3.tam.jsonl"]
-    assert read_json(out / "select.local_naturalness.k3.tam.json")["blocked"]
+    assert b2.main(["--workdir", str(work), "--outdir", str(out)] + locked + ["--allow-blocked"]) == 0
+    assert [p.name for p in out.glob("train.*")] == ["train.grape.k3.tam.jsonl"]
+    assert read_json(out / "select.grape.k3.tam.json")["blocked"]
     b2.main(["--workdir", str(work), "--outdir", str(out), "--method", "rsr"])
     assert read_json(out / "select.rsr.k3.json")["blocked"] is None
 

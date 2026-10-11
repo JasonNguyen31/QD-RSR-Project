@@ -25,6 +25,8 @@ gọi đúng hàm đó để không đọc nhầm file của một λ cũ.
 Bốn quy tắc chọn (khoá select.rule trong configs/method và configs/ablation):
     random     k chuỗi đầu theo thứ tự cố định (xem dưới). Correct-Only, No-Filter.
     topk       k chuỗi đứng đầu theo một tín hiệu. CHỈ RSR LÀ CỰC TIỂU, chiều lấy từ signal_direction.
+               Tín hiệu local_nat_k<k> (thêm 11/10) không nằm trong file fit mà đọc từ localnat.<student>_base.glm.jsonl
+               do b1_localnat ghi: LocalNat đúng bài gốc, trên bước của GLM-4.5-Air, với k bước ngữ cảnh.
     objective  duyệt hết mọi tập con cỡ k, lấy tập tối đa hoá F(S) = Σ Fit^a·Qual^b + λ·Div(S) (objective.py).
     teacher    (thêm 08/10) rút ngẫu nhiên như random, nhưng xếp chuỗi theo MÔ HÌNH DẠY trước: các mô hình trong
                select.prefer đứng đầu, các mô hình trong select.avoid đứng cuối. Không dùng tín hiệu nào của mô
@@ -64,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import statistics
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -78,6 +81,7 @@ from src.stage_b.objective import (base_of_subsets, choose, distance_matrix, div
 from src.stage_b.signals import SIGNALS_VERSION, lark_ghat, lark_weights
 
 SIGNAL_COLUMN = {"token_length": "n_tokens"}      # tên tín hiệu trong cấu hình -> cột của file fit
+LOCALNAT_SIGNAL = re.compile(r"local_nat_k\d+")   # LocalNat trên bước của GLM: cột của file localnat.<student>.glm.jsonl
 FIT_COLUMNS = ("rsr", "grape", "local_nat", "n_tokens")
 PINNED_IN_ALL = ("selection.a", "selection.b", "selection.lambda_div")
 EXTENDED_POOLS = ("all", "all_complete")          # kho có cả chuỗi sai; all_complete bỏ chuỗi bị cắt
@@ -135,6 +139,36 @@ def check_fit_rows(rows: Sequence[Mapping], name: str, want_model: str) -> None:
                          f"Sai file fit hoặc sai --student.")
 
 
+def localnat_name(fit_name: str) -> str:
+    """fit.qwen1_5b_base.jsonl -> localnat.qwen1_5b_base.glm.jsonl (file do b1_localnat ghi)."""
+    stem = fit_name[len("fit."):] if fit_name.startswith("fit.") else fit_name
+    return "localnat." + (stem[:-len(".jsonl")] if stem.endswith(".jsonl") else stem) + ".glm.jsonl"
+
+
+def load_localnat(path: Path, want_model: str, cands: Sequence[Mapping]) -> dict:
+    """Điểm LocalNat trên bước của GLM, theo tid. File chưa có thì trả về {}: chỉ phương án dùng tín hiệu này mới
+    cần nó. Kiểm hai điều để không dùng nhầm file: chấm bằng đúng mô hình học, và văn bản chuỗi không đổi kể từ
+    lúc chấm (text_md5)."""
+    rows = read_jsonl(path) if path.exists() else []
+    if not rows:
+        return {}
+    models = {r.get("model") for r in rows}
+    if models != {want_model}:
+        raise SystemExit(f"{path.name} chấm bằng {sorted(map(str, models))}, cấu hình đòi {want_model}.")
+    by_tid = {r["tid"]: r for r in rows}
+    stale = [c["tid"] for c in cands if c["tid"] in by_tid and by_tid[c["tid"]].get("text_md5") not in
+             (None, hashlib.md5(c["text"].encode("utf-8")).hexdigest())]
+    if stale:
+        raise SystemExit(f"{path.name}: {len(stale)} chuỗi có văn bản khác lúc chấm (ví dụ {stale[:3]}). File điểm "
+                         f"LocalNat không còn khớp candidates.jsonl; chấm lại bằng b1_localnat.")
+    return by_tid
+
+
+def direction_of(cfg: Mapping, name: str) -> str:
+    """Chiều tối ưu của một tín hiệu. Mọi cột local_nat_k<k> dùng chung chiều đã khai báo cho local_nat."""
+    return signal_direction(cfg, "local_nat" if LOCALNAT_SIGNAL.fullmatch(name) else name)
+
+
 # ============================================================ dựng kho ứng viên
 def usable_pool(cands: Sequence[Mapping], quality: Mapping[str, Mapping], min_correct: int) -> tuple[dict, dict]:
     """Chuỗi đúng dùng được của từng câu hỏi được giữ, và thống kê việc loại.
@@ -178,7 +212,7 @@ def all_chains_pool(trajectories: Sequence[Mapping], kept_qids: set, excluded: s
 
 def assemble(pool: Mapping[str, Sequence[Mapping]], correct_tids: set, quality: Mapping[str, Mapping],
              fit: Mapping[str, Mapping], emb_row: Mapping[str, int], vecs: np.ndarray, seed: int,
-             need_signals: bool) -> dict:
+             need_signals: bool, localnat: Mapping[str, Mapping] | None = None) -> dict:
     """Ghép mọi nguồn theo tid cho từng câu hỏi, các chuỗi xếp theo thứ tự cố định.
 
     need_signals: kho này có buộc phải đủ tín hiệu không. Buộc mà thiếu ở bất kỳ chuỗi nào thì dừng, không âm
@@ -212,6 +246,11 @@ def assemble(pool: Mapping[str, Sequence[Mapping]], correct_tids: set, quality: 
             for col in FIT_COLUMNS:
                 if all(col in f for f in frows):
                     q["signals"][col] = np.array([float(f[col]) for f in frows])
+            lrows = [(localnat or {}).get(t) for t in tids]
+            if all(r is not None for r in lrows):          # câu nào thiếu dù chỉ một chuỗi thì không có tín hiệu này
+                for col in sorted(c for c in lrows[0] if LOCALNAT_SIGNAL.fullmatch(c)):
+                    if all(col in r for r in lrows):
+                        q["signals"][col] = np.array([float(r[col]) for r in lrows])
             _rho, ghat = lark_ghat([float(f["mean_surprisal"]) for f in frows], [float(f["brier"]) for f in frows])
             q["signals"]["lark"] = np.array(ghat)
             q["fit"] = fit_from_rsr(q["signals"]["rsr"])
@@ -302,9 +341,14 @@ def select_all(questions: Mapping[str, Mapping], cfg: Mapping) -> dict:
             name = spec["signal"]
             col = SIGNAL_COLUMN.get(name, name)
             if col not in q["signals"]:
+                if LOCALNAT_SIGNAL.fullmatch(col):
+                    raise SystemExit(f"Chưa có điểm '{col}' cho mọi chuỗi của câu {qid}: file điểm LocalNat trên bước "
+                                     f"của GLM chưa có trong thư mục dữ liệu, chưa chấm xong, hoặc không có cột này. "
+                                     f"Chạy xong src.stage_b.b1_localnat rồi chép file localnat.<student>_base.glm.jsonl "
+                                     f"về. Phương án {spec['name']} chưa chạy được.")
                 raise SystemExit(f"File fit không có tín hiệu '{col}' (mô hình 7 tỷ bỏ LocalNat theo quyết định "
                                  f"30/09). Phương án {spec['name']} không chạy được với file này.")
-            p = pick_topk(q["signals"][col], k, signal_direction(cfg, name))
+            p = pick_topk(q["signals"][col], k, direction_of(cfg, name))
         elif rule == "objective":
             p = pick_objective(q, k, float(sel["a"]), float(sel["b"]), float(sel["lambda_div"]), sel["div_scale"])
         elif rule == "teacher":
@@ -409,6 +453,8 @@ class Inputs:
                              f"{len(self.quality)}, {fit_name} {len(fit_rows)}.")
         check_fit_rows(fit_rows, fit_name, cfg["student"]["base_model_id"])
         self.fit = {r["tid"]: r for r in fit_rows}
+        self.localnat_name = localnat_name(fit_name)
+        self.localnat = load_localnat(workdir / self.localnat_name, cfg["student"]["base_model_id"], self.cands)
         npz = np.load(workdir / "embeddings.npz")
         self.emb_row = {str(t): i for i, t in enumerate(npz["tids"])}
         self.vecs = npz["vectors"]
@@ -443,7 +489,8 @@ class Inputs:
             if unjudged:
                 print(f"[b2] kho mở rộng: loại {len(unjudged)} chuỗi sai giám khảo không chấm được")
                 chains = {q: [c for c in v if c["tid"] not in unjudged] for q, v in chains.items()}
-        out = assemble(chains, self.correct_tids, quality, fit, emb_row, vecs, self.seed, need)
+        out = assemble(chains, self.correct_tids, quality, fit, emb_row, vecs, self.seed, need,
+                       self.localnat if pool == "correct" else None)
         self._questions[(pool, need)] = out
         return out
 
@@ -477,6 +524,17 @@ class Inputs:
 
 
 # ============================================================ chạy một phương án
+def localnat_meta(inp: "Inputs", spec: Mapping, picks: Mapping, questions: Mapping) -> dict:
+    """Với phương án dùng điểm LocalNat trên bước của GLM: ghi lại file điểm (tên, md5), phiên bản quy tắc dựng bước
+    và nguồn bước của các chuỗi ĐƯỢC CHỌN, để paper báo cáo được bao nhiêu chuỗi huấn luyện có bước cắt dự phòng."""
+    if not LOCALNAT_SIGNAL.fullmatch(str(spec.get("signal") or "")):
+        return {}
+    chosen = [inp.localnat[questions[q]["tids"][i]] for q, p in picks.items() for i in p["idx"]]
+    return {"signal_file": inp.localnat_name, "signal_file_md5": hashlib.md5((inp.workdir / inp.localnat_name).read_bytes()).hexdigest(),
+            "steps_version": sorted({r.get("steps_version") for r in chosen}, key=str),
+            "steps_source_selected": dict(sorted(Counter(r.get("steps_source", "glm") for r in chosen).items()))}
+
+
 def run_one(inp: Inputs, cfg: Mapping, outdir: Path) -> dict:
     spec, sel = cfg["select"], cfg["selection"]
     k, tag = int(sel["k"]), selection_tag(cfg)
@@ -491,6 +549,7 @@ def run_one(inp: Inputs, cfg: Mapping, outdir: Path) -> dict:
                "div_scale": sel["div_scale"], "random_seed": inp.seed, "fit_file": inp.fit_name,
                "student": cfg["student"]["base_model_id"], "blocked": spec.get("blocked"),
                "prefer": spec.get("prefer"), "avoid": spec.get("avoid"), "control": bool(spec.get("control")),
+               **localnat_meta(inp, spec, picks, questions),
                **summarize(questions, picks, k),
                "train_file": path.name, "md5": hashlib.md5(path.read_bytes()).hexdigest()}
     write_json(outdir / f"select.{tag}.json", summary)

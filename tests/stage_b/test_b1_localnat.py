@@ -217,7 +217,7 @@ def test_score_chain_uses_the_given_step_ends_and_truncates_like_b1_fit(tiny):
 
 def test_full_run_writes_one_row_per_chain_resumes_and_keeps_the_fit_file_untouched(tiny, tmp_path, monkeypatch, capsys):
     torch, model = tiny
-    cfg = make_workdir(tmp_path, n_q=4)
+    cfg = make_workdir(tmp_path, n_q=4, localnat=False)                   # file điểm do chính lần chạy này ghi ra
     rows = split_rows(tmp_path, broken={0})
     fit_before = (tmp_path / "fit.qwen1_5b_base.jsonl").read_bytes()
     loads = []

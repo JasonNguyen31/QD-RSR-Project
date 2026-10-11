@@ -1,12 +1,14 @@
-# Local Naturalness (Just 2025, phương trình 2). Quyết định 02/10: làm ĐÚNG bài gốc, cắt bước bằng GLM-4.5-Air
-# (tắt chế độ suy nghĩ), làm sau và song song với huấn luyện, bắt đầu bằng lô thử 200 chuỗi.
-# Cột local_nat hiện có trong file fit là bản xấp xỉ cắt bước theo dấu câu: chỉ dùng để phân tích.
-# Khoá blocked chặn việc sinh file huấn luyện từ bản xấp xỉ; b2_select --allow-blocked vẫn cho tập chọn mang
-# đuôi .tam để dựng bảng I.9. Khi có cột tín hiệu đúng bài gốc: đổi signal sang cột đó và xoá khoá blocked.
-# File fit của mô hình 7 tỷ không có cột local_nat nên phương án này chỉ chạy với mô hình 1,5 tỷ.
+# Local Naturalness đúng bài gốc (Just và cộng sự, arXiv 2510.03988; bản mới nhất gọi là LALP): bước là nhóm câu do
+# GLM-4.5-Air cắt (src/tools/segment_steps), điểm chấm bằng src/stage_b/b1_localnat và nằm trong file
+# localnat.<student>_base.glm.jsonl, KHÔNG nằm trong file fit.
+#
+# signal: local_nat_k<k> với k là số bước ngữ cảnh. Bước là nhóm câu (trung vị 6 bước mỗi chuỗi), nên k = 4 cho mô
+# hình thấy 83% phần đứng trước và chấm 67% số bước y như GRAPE; k = 1 cho thấy 38% và 28%. Bài gốc: cửa sổ 5% đến
+# 25% xếp hạng đúng, 50% đến 75% hội tụ về cách chấm toàn cục. Vì vậy đặt k = 1. Đổi k là đổi đúng dòng signal.
+# Cột local_nat trong file fit (cắt bước theo dấu câu, k = 4) là bản xấp xỉ cũ, chỉ còn dùng để đối chiếu.
+# File fit của mô hình 7 tỷ không có tín hiệu này nên phương án chỉ chạy với mô hình 1,5 tỷ.
 select:
   name: local_naturalness
   pool: correct
   rule: topk
-  signal: local_nat
-  blocked: "cột local_nat là bản xấp xỉ theo dấu câu, chưa phải bản cắt bước bằng GLM-4.5-Air của bài gốc."
+  signal: local_nat_k1
