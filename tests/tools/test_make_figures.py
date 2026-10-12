@@ -161,3 +161,99 @@ def test_distance_figure_refuses_probe_without_teacher_split(tmp_path):
     (wd / "embed_probe.json").write_text(json.dumps({"by_group": {"gsm8k": {"median": 0.3}}}))
     with pytest.raises(SystemExit):
         mf.build_distance(load_config(), str(wd))
+
+
+# ---------------------------------------------------------------- hình kết quả (thêm 12/10)
+def _eval_run(root, tag, seed, correct):
+    """Một lần đánh giá giả: 4 câu x 4 lượt trên math500; `correct[q]` là số lượt đúng của câu q."""
+    import json
+    d = root / tag / f"seed{seed}"
+    d.mkdir(parents=True)
+    rows = [{"qid": f"q{q}", "sample": s, "correct": s < c} for q, c in enumerate(correct) for s in range(4)]
+    (d / "math500.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    acc = sum(correct) / (4 * len(correct))
+    (d / "summary.json").write_text(json.dumps({"settings": {"n_samples": 4},
+                                                "benchmarks": {"math500": {"acc@4": acc, "pass@4": 1.0}}}),
+                                    encoding="utf-8")
+
+
+def _select(seldir, tag, qwen):
+    import json
+    seldir.mkdir(parents=True, exist_ok=True)
+    (seldir / f"select.{tag}.json").write_text(json.dumps(
+        {"tag": tag, "teacher_share": {"qwen72b": qwen, "deepseek": 1 - qwen, "llama70b": 0.0}}), encoding="utf-8")
+
+
+def _results_fixture(tmp_path):
+    res, sel = tmp_path / "eval", tmp_path / "stage_b"
+    for sd in (42, 43):
+        _eval_run(res, "correct_only.k3", sd, [2, 2, 2, 2])
+        _eval_run(res, "grape.k3", sd, [4, 4, 2, 2])
+    _eval_run(res, "teacher_qwen_last.k3", 42, [0, 0, 2, 2])
+    _eval_run(res, "unknown_set.k3", 42, [4, 4, 4, 4])         # không có trong RESULT_SETS thì không vẽ
+    _select(sel, "correct_only.k3", 0.287)
+    _select(sel, "grape.k3", 0.753)
+    _select(sel, "teacher_qwen_last.k3", 0.004)
+    return res, sel
+
+
+def test_result_rows_read_acc_share_and_paired_difference(tmp_path):
+    res, sel = _results_fixture(tmp_path)
+    rows = {r["tag"]: r for r in mf.result_rows(res, sel, n_boot=200)}
+    assert set(rows) == {"correct_only.k3", "grape.k3", "teacher_qwen_last.k3"}
+    g, t, b = rows["grape.k3"], rows["teacher_qwen_last.k3"], rows["correct_only.k3"]
+    assert (g["seeds"], t["seeds"]) == (2, 1)
+    assert g["acc"] == pytest.approx(75.0) and g["share"] == pytest.approx(75.3)
+    assert g["diff"] == pytest.approx(25.0) and g["lo"] <= g["diff"] <= g["hi"]
+    assert t["diff"] == pytest.approx(-25.0) and t["group"] == "teacher"
+    assert b["diff"] is None
+
+
+def test_result_rows_respect_seed_filter(tmp_path):
+    res, sel = _results_fixture(tmp_path)
+    rows = {r["tag"]: r for r in mf.result_rows(res, sel, seeds=[43], n_boot=50)}
+    assert "teacher_qwen_last.k3" not in rows and rows["grape.k3"]["seeds"] == 1
+
+
+def test_result_rows_refuse_missing_select_file(tmp_path):
+    res, sel = _results_fixture(tmp_path)
+    (sel / "select.grape.k3.json").unlink()
+    with pytest.raises(SystemExit, match="select.grape.k3.json"):
+        mf.result_rows(res, sel, n_boot=50)
+
+
+def test_spearman_matches_known_values():
+    assert mf.spearman_rho([1, 2, 3, 4], [10, 20, 30, 40]) == pytest.approx(1.0)
+    assert mf.spearman_rho([1, 2, 3, 4], [4, 3, 2, 1]) == pytest.approx(-1.0)
+    assert mf.spearman_rho([1, 2, 2, 3], [1, 2, 3, 4]) == pytest.approx(0.9486833, abs=1e-6)
+
+
+@pytest.mark.parametrize("lang,needles", [("en", ["Prefer Qwen-72B", "mean of 2+ seeds", "teacher-identity control"]),
+                                          ("vi", ["Ưu tiên Qwen-72B", "trung bình từ 2 seed", "mức Correct-Only"])])
+def test_teacher_share_figure_uses_circles_only(lang, needles):
+    rows = [{"tag": "correct_only.k3", "en": "Correct-Only", "vi": "Correct-Only", "group": "free", "seeds": 2,
+             "acc": 47.6, "share": 28.7},
+            {"tag": "teacher_qwen_first.k3", "en": "Prefer Qwen-72B", "vi": "Ưu tiên Qwen-72B", "group": "teacher",
+             "seeds": 1, "acc": 54.9, "share": 80.3},
+            {"tag": "fit_quality.k3", "en": "QD-RSR (λ = 0)", "vi": "QD-RSR (λ = 0)", "group": "student", "seeds": 2,
+             "acc": 45.5, "share": 5.8}]
+    svg = mf.build_teacher_share(rows, lang)
+    ET.fromstring(svg)
+    for w in needles:
+        assert w in svg, w
+    assert "<polygon" not in svg and "<path" not in svg   # Jason 12/10: chỉ chấm tròn, không hình thoi
+    assert svg.count('fill="#ffffff" stroke="#eb6834"') == 1  # tập 1 seed là chấm rỗng
+
+
+def test_forest_figure_explains_symbols_and_signs():
+    rows = [{"tag": "grape.k3", "vi": "GRAPE", "group": "student", "seeds": 2, "diff": 6.8, "lo": 5.1, "hi": 8.6},
+            {"tag": "rsr.k3", "vi": "RSR", "group": "student", "seeds": 2, "diff": -2.0, "lo": -3.5, "hi": -0.4}]
+    svg = mf.build_forest(rows)
+    ET.fromstring(svg)
+    for w in ("+6,8", "−2,0", "khoảng tin cậy 95%", "không cắt vạch 0"):
+        assert w in svg, w
+
+
+def test_results_group_lists_every_result_figure():
+    assert set(mf.RESULTS) <= set(mf.FIGURES)
+    assert mf.FIGURES["teacher_share"][0] == "fig3_teacher_share"     # tên file trong main.tex

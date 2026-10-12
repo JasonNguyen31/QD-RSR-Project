@@ -12,6 +12,14 @@ Không để lại file SVG trung gian.
     Hình 2  distribution  Phân bố số chuỗi đúng mỗi câu theo độ khó. Biện minh cho việc đổi dữ liệu
     Hình 3  selection     Ví dụ chọn lọc trên một câu hỏi. CHƯA LÀM: cần điểm Fit, Qual, Div thật
 
+Hình KẾT QUẢ, đọc kết quả đánh giá (c1_evaluate) và select.<tên>.json (b2_select), gọi gộp bằng `results`:
+
+    Paper  teacher_share     Acc@4 trên MATH-500 theo tỷ lệ chuỗi Qwen2.5-72B của tập huấn luyện (tiếng Anh)
+    C-2    teacher_share_vi  Cùng hình, chữ tiếng Việt cho báo cáo
+    C-1    forest            Chênh lệch so với Correct-Only kèm khoảng tin cậy 95% ghép cặp (tiếng Việt)
+
+    python -m src.tools.make_figures results --seeds 42 43
+
 Hình cho BÁO CÁO ĐỒ ÁN (Notion mục T4), đọc thẳng từ dữ liệu thật, gọi gộp bằng `report`:
 
     A-2  teachers      Tỷ lệ đúng theo mô hình dạy và mức độ khó
@@ -495,6 +503,298 @@ def build_correlation(cfg, workdir: str, fit_file: str) -> str:
     return s.render()
 
 
+# ================================================================ Hình kết quả: đọc kết quả đánh giá và tập chọn
+# Hai hình dùng chung một bảng số: Acc@4 trên MATH-500 của từng tập huấn luyện (trung bình qua các seed),
+# chênh lệch ghép cặp so với Correct-Only kèm khoảng tin cậy 95% (cùng cách tính với eval_table --versus),
+# và tỷ lệ chuỗi Qwen2.5-72B trong tập (đọc từ select.<tên>.json do b2_select ghi). Chạy trên máy có kết quả đánh giá.
+C_STUDENT, C_TEACHER, C_FREE = "#2a78d6", "#eb6834", "#52514e"
+GRID_C, LEAD_C = "#e8e7e3", "#a9a8a2"
+# tên tập chọn -> (nhãn tiếng Anh, nhãn tiếng Việt, nhóm). Nhóm quyết định màu. Tập không có trong bảng thì không vẽ.
+RESULT_SETS = {
+    "no_filter.k3": ("No-Filter", "No-Filter", "free"),
+    "correct_only.k3": ("Correct-Only", "Correct-Only", "free"),
+    "token_length.k3": ("Token-Length", "Token-Length", "free"),
+    "grape.k3": ("GRAPE", "GRAPE", "student"),
+    "local_naturalness.k3": ("Local Naturalness", "Local Naturalness", "student"),
+    "rsr.k3": ("RSR", "RSR", "student"),
+    "lark.k3": ("LARK", "LARK", "student"),
+    "fit_quality.k3": ("QD-RSR (λ = 0)", "QD-RSR (λ = 0)", "student"),
+    "qd_rsr.k3.lam0.4": ("λ = 0.4 (not selected)", "λ = 0,4 (không được chọn)", "student"),
+    "teacher_qwen_first.k3": ("Prefer Qwen-72B", "Ưu tiên Qwen-72B", "teacher"),
+    "teacher_qwen_last.k3": ("Avoid Qwen-72B", "Tránh Qwen-72B", "teacher"),
+}
+OURS, BASE = "fit_quality.k3", "correct_only.k3"
+GROUP_COLOR = {"student": C_STUDENT, "teacher": C_TEACHER, "free": C_FREE}
+RESULT_TEXT = {
+    "en": {"x": "Share of Qwen2.5-72B trajectories in the training set (%)", "y": "MATH-500 Acc@4 (%)",
+           "groups": ["selected by a student signal", "teacher-identity control", "no student signal"],
+           "seeds": ["mean of 2+ seeds", "1 seed"], "base": "Correct-Only", "dec": "."},
+    "vi": {"x": "Tỷ lệ chuỗi của Qwen2.5-72B trong tập huấn luyện (%)", "y": "Acc@4 trên MATH-500 (%)",
+           "groups": ["chọn theo tín hiệu của mô hình học", "đối chứng theo mô hình dạy",
+                      "không dùng tín hiệu của mô hình học"],
+           "seeds": ["trung bình từ 2 seed", "1 seed"], "base": "mức Correct-Only", "dec": ","},
+}
+
+
+def result_rows(results: Path, seldir: Path, seeds: Sequence[int] | None = None, bench: str = "math500",
+                base: str = BASE, teacher: str = "qwen72b", n_boot: int = 2000) -> list[dict]:
+    """Một dòng cho mỗi tập trong RESULT_SETS có kết quả trên `bench`: acc (%), số seed, tỷ lệ chuỗi của `teacher`
+    (%), và chênh lệch ghép cặp so với `base` (điểm %) trên các seed hai tập cùng có. Thiếu select.<tên>.json hay
+    thiếu file từng lượt sinh thì dừng và báo, không vẽ thiếu."""
+    from src.tools.eval_table import find_runs, paired_bootstrap, pooled_question_acc
+
+    runs = find_runs(results)
+    if base not in runs:
+        raise SystemExit(f"Không thấy kết quả của {base} trong {results}.")
+    base_seeds = {sd for sd, s in runs[base].items() if bench in s.get("benchmarks", {})}
+    rows = []
+    for tag, (en, vi, group) in RESULT_SETS.items():
+        by_seed = {sd: s for sd, s in runs.get(tag, {}).items()
+                   if (seeds is None or sd in seeds) and bench in s.get("benchmarks", {})}
+        if not by_seed:
+            continue
+        sel = seldir / f"select.{tag}.json"
+        if not sel.exists():
+            raise SystemExit(f"Thiếu {sel}: cần tỷ lệ mô hình dạy của tập {tag}.")
+        share = json.loads(sel.read_text(encoding="utf-8")).get("teacher_share", {})
+        n_samples = int(next(iter(by_seed.values())).get("settings", {}).get("n_samples", 4))
+        row = {"tag": tag, "en": en, "vi": vi, "group": group, "seeds": len(by_seed),
+               "acc": 100 * sum(s["benchmarks"][bench]["acc@4"] for s in by_seed.values()) / len(by_seed),
+               "share": 100 * float(share.get(teacher, 0.0)), "diff": None, "lo": None, "hi": None}
+        if tag != base:
+            shared = sorted(set(by_seed) & base_seeds)
+            r = None
+            if shared:
+                r = paired_bootstrap(pooled_question_acc(runs[tag], shared, bench, n_samples),
+                                     pooled_question_acc(runs[base], shared, bench, n_samples), n_boot)
+            if r is None:
+                raise SystemExit(f"Không so ghép cặp được {tag} với {base} trên {bench} (thiếu file {bench}.jsonl?).")
+            row.update(diff=100 * r["diff"], lo=100 * r["lo"], hi=100 * r["hi"])
+        rows.append(row)
+    return rows
+
+
+def spearman_rho(x: Sequence[float], y: Sequence[float]) -> float:
+    """Tương quan hạng Spearman, giá trị bằng nhau lấy hạng trung bình. Chỉ để mô tả, không kiểm định."""
+    def ranks(v: Sequence[float]) -> list[float]:
+        order = sorted(range(len(v)), key=lambda i: v[i])
+        r = [0.0] * len(v)
+        i = 0
+        while i < len(order):
+            j = i
+            while j + 1 < len(order) and v[order[j + 1]] == v[order[i]]:
+                j += 1
+            for k in range(i, j + 1):
+                r[order[k]] = (i + j) / 2
+            i = j + 1
+        return r
+    rx, ry = ranks(list(x)), ranks(list(y))
+    mx, my = sum(rx) / len(rx), sum(ry) / len(ry)
+    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    den = (sum((a - mx) ** 2 for a in rx) * sum((b - my) ** 2 for b in ry)) ** 0.5
+    return num / den if den else 0.0
+
+
+def num(v: float, dec: str = ",", digits: int | None = None, sign: bool = False) -> str:
+    """Số để in lên hình: dấu thập phân theo ngôn ngữ, dấu trừ thật."""
+    if digits is None:
+        txt = f"{v:g}"
+    else:
+        txt = f"{v:+.{digits}f}" if sign else f"{v:.{digits}f}"
+    return txt.replace(".", dec).replace("-", "−")
+
+
+def dot(s: Svg, x: float, y: float, color: str, filled: bool, r: float = 13) -> None:
+    s.add(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{color if filled else "#ffffff"}" '
+          f'stroke="{color}" stroke-width="5"/>')
+
+
+def swatch(s: Svg, x: float, y: float, color: str) -> None:
+    """Ô màu cho chú giải nhóm; dùng ô chứ không dùng chấm để không lẫn với chú giải chấm đặc, chấm rỗng."""
+    s.add(f'<rect x="{x}" y="{y - 20}" width="36" height="20" fill="{color}"/>')
+
+
+def build_teacher_share(rows: Sequence[Mapping], lang: str = "en") -> str:
+    """Acc@4 trên MATH-500 theo tỷ lệ chuỗi Qwen2.5-72B của tập huấn luyện. Chỉ dùng chấm tròn: màu là cách chọn,
+    chấm đặc là trung bình từ 2 seed, chấm rỗng là 1 seed. Cụm bên trái (tỷ lệ dưới 15%) xếp nhãn thành một cột
+    có đường dẫn; các điểm khác thử lần lượt vài vị trí quanh điểm cho tới khi không đè lên gì."""
+    t = RESULT_TEXT[lang]
+    pts = [r for r in rows if r.get("acc") is not None]
+    if not pts:
+        raise SystemExit("Không có tập nào có kết quả để vẽ.")
+    W, H = 1500, 940
+    L, R, T, B = 140, 40, 30, 130
+    pw, ph = W - L - R, H - T - B
+    x0, x1 = -3.0, 90.0
+    y0 = float(int(min(r["acc"] for r in pts)) - 1)
+    y1 = float(int(max(r["acc"] for r in pts)) + 3)
+
+    def X(v: float) -> float:
+        return L + (v - x0) / (x1 - x0) * pw
+
+    def Y(v: float) -> float:
+        return T + ph - (v - y0) / (y1 - y0) * ph
+
+    s = Svg(W, H)
+    for v in range(0, 100, 20):
+        s.line(X(v), T, X(v), T + ph, GRID_C, 2)
+        s.text(X(v), T + ph + 42, str(v), 28, DIM, "middle")
+    step = 2 if (y1 - y0) <= 24 else 5
+    v = y0 + (-y0) % step
+    while v <= y1:
+        s.line(L, Y(v), L + pw, Y(v), GRID_C, 2)
+        s.text(L - 16, Y(v) + 10, num(v, t["dec"]), 28, DIM, "end")
+        v += step
+    s.line(L, T + ph, L + pw, T + ph, GREY, 3)
+    s.line(L, T, L, T + ph, GREY, 3)
+    s.text(L + pw / 2, H - 30, t["x"], 30, INK, "middle")
+    s.add(f'<text x="40" y="{T + ph / 2}" transform="rotate(-90 40 {T + ph / 2})" text-anchor="middle" '
+          f'font-family="{FONT}" font-size="30" fill="{INK}">{t["y"]}</text>')
+    base = next((r for r in pts if r["tag"] == BASE), None)
+    if base:
+        s.line(L, Y(base["acc"]), L + pw, Y(base["acc"]), LEAD_C, 2.5, dashed=True)
+        s.text(L + pw - 8, Y(base["acc"]) - 12, t["base"], 24, DIM, "end")
+
+    # chú giải ở góc dưới phải: hai dòng số seed, rồi ba dòng màu
+    lw = max(text_width(x, 24) for x in t["groups"] + t["seeds"]) + 70
+    lx, ly, dy = L + pw - lw, T + ph - 5 * 38 - 18, 38
+    boxes = [(X(r["share"]) - 16, Y(r["acc"]) - 16, 32, 32) for r in pts] + [(lx - 10, ly - 10, lw + 10, 5 * dy + 20)]
+    if base:                                             # nhãn không được đè lên đường gạch Correct-Only
+        boxes += [(L, Y(base["acc"]) - 3, pw, 6), (L + pw - 8 - text_width(t["base"], 24), Y(base["acc"]) - 34,
+                                                   text_width(t["base"], 24), 28)]
+    for i, (filled, lab) in enumerate(zip([True, False], t["seeds"])):
+        dot(s, lx + 18, ly + 18 + i * dy, C_FREE, filled, 10)
+        s.text(lx + 50, ly + 27 + i * dy, lab, 24, DIM)
+    for i, (g, lab) in enumerate(zip(["student", "teacher", "free"], t["groups"])):
+        swatch(s, lx, ly + 2 * dy + 28 + i * dy, GROUP_COLOR[g])
+        s.text(lx + 50, ly + 2 * dy + 27 + i * dy, lab, 24, DIM)
+
+    def fits(bx: tuple) -> bool:
+        x, y, w, h = bx
+        return (x >= L + 4 and x + w <= L + pw and y >= T and y + h <= T + ph and
+                not any(x < ox + ow and ox < x + w and y < oy + oh and oy < y + h for ox, oy, ow, oh in boxes))
+
+    placed = []
+    left = sorted([r for r in pts if r["share"] < 15], key=lambda r: -r["acc"])
+    col_x, gap, ys = X(12), 40, []
+    for r in left:                                       # cột nhãn theo thứ tự Acc@4, cách nhau ít nhất `gap`
+        y = Y(r["acc"]) + 9
+        ys.append(max(y, ys[-1] + gap) if ys else y)
+    if ys and ys[-1] > T + ph - 8:                       # tràn xuống trục thì đẩy cả cột lên
+        ys = [y - (ys[-1] - (T + ph - 8)) for y in ys]
+    for r, y in zip(left, ys):
+        w = text_width(r[lang], 26, r["tag"] == OURS)
+        placed.append((r, col_x, y, "start"))
+        boxes.append((col_x, y - 24, w, 32))
+    for r in sorted([r for r in pts if r["share"] >= 15], key=lambda r: -r["acc"]):
+        px, py = X(r["share"]), Y(r["acc"])
+        w = text_width(r[lang], 26, r["tag"] == OURS)
+        cands = [(px + 24, py + 9, "start"), (px - 24, py + 9, "end"), (px + 16, py - 24, "start"),
+                 (px - 16, py - 24, "end"), (px + 16, py + 44, "start"), (px - 16, py + 44, "end"),
+                 (px - 60, py - 60, "end"), (px + 60, py - 60, "start"), (px - 60, py + 80, "end"),
+                 (px + 60, py + 80, "start")]
+        for cx, cy, anc in cands:
+            bx = (cx if anc == "start" else cx - w, cy - 24, w, 32)
+            if fits(bx):
+                break
+        placed.append((r, cx, cy, anc))
+        boxes.append(bx)
+    for r, cx, cy, anc in placed:                        # đường dẫn vẽ trước để nằm dưới chấm và chữ
+        px, py = X(r["share"]), Y(r["acc"])
+        if abs(cx - px) > 26 or abs(cy - 9 - py) > 12:
+            s.line(px, py, cx + (-6 if anc == "start" else 6), cy - 9, LEAD_C, 2)
+    for r in pts:
+        dot(s, X(r["share"]), Y(r["acc"]), GROUP_COLOR[r["group"]], r["seeds"] >= 2)
+    for r, cx, cy, anc in placed:
+        s.text(cx, cy, r[lang], 26, INK, anc, "700" if r["tag"] == OURS else "400")
+    return s.render()
+
+
+def build_forest(rows: Sequence[Mapping]) -> str:
+    """Chênh lệch Acc@4 trên MATH-500 so với Correct-Only, mỗi dòng một tập: chấm là chênh lệch, đoạn ngang là
+    khoảng tin cậy 95% ghép cặp theo câu hỏi. Chú giải nói rõ ký hiệu và cách đọc vạch 0 (bản tiếng Việt)."""
+    t = RESULT_TEXT["vi"]
+    rs = sorted([r for r in rows if r.get("diff") is not None], key=lambda r: -r["diff"])
+    if not rs:
+        raise SystemExit("Không có chênh lệch nào để vẽ.")
+    W, row_h, L, R, T = 1500, 66, 430, 110, 24
+    ph = row_h * len(rs)
+    H = T + ph + 330
+    lo = min(r["lo"] for r in rs) - 1.8
+    hi = max(r["hi"] for r in rs) + 2.2
+
+    def X(v: float) -> float:
+        return L + (v - lo) / (hi - lo) * (W - L - R)
+
+    s = Svg(W, H)
+    step = 2.0 if hi - lo <= 22 else 4.0
+    v = lo + (-lo) % step
+    while v <= hi:
+        s.line(X(v), T, X(v), T + ph, GRID_C, 2)
+        s.text(X(v), T + ph + 42, num(round(v, 6), ","), 28, DIM, "middle")
+        v += step
+    s.line(X(0), T - 8, X(0), T + ph, GREY, 3)
+    s.line(L, T + ph, W - R, T + ph, GREY, 3)
+    s.text((L + W - R) / 2, T + ph + 92, "Chênh lệch Acc@4 trên MATH-500 so với Correct-Only (điểm %)", 30, INK,
+           "middle")
+    for i, r in enumerate(rs):
+        y = T + row_h * (i + 0.5)
+        c = GROUP_COLOR[r["group"]]
+        s.text(L - 28, y + 10, r["vi"], 28, INK, "end", "700" if r["tag"] == OURS else "400")
+        s.add(f'<line x1="{X(r["lo"]):.1f}" y1="{y:.1f}" x2="{X(r["hi"]):.1f}" y2="{y:.1f}" stroke="{c}" '
+              f'stroke-width="7" stroke-linecap="round"/>')
+        dot(s, X(r["diff"]), y, c, r["seeds"] >= 2, 12)
+        if r["diff"] < 0:                                # số đặt phía ngoài đoạn ngang, không đè lên vạch 0
+            s.text(X(r["lo"]) - 16, y + 10, num(r["diff"], ",", 1, sign=True), 27, INK, "end")
+        else:
+            s.text(X(r["hi"]) + 16, y + 10, num(r["diff"], ",", 1, sign=True), 27, INK)
+    ly = T + ph + 160
+    x = 60
+    for g, lab in zip(["student", "teacher", "free"], t["groups"]):
+        swatch(s, x, ly, GROUP_COLOR[g])
+        s.text(x + 48, ly, lab, 25, DIM)
+        x += 48 + text_width(lab, 25) + 50
+    ly += 50
+    dot(s, 78, ly - 9, C_FREE, True, 10)
+    s.text(108, ly, t["seeds"][0], 25, DIM)
+    x = 108 + text_width(t["seeds"][0], 25) + 60
+    dot(s, x + 18, ly - 9, C_FREE, False, 10)
+    s.text(x + 48, ly, t["seeds"][1], 25, DIM)
+    x += 48 + text_width(t["seeds"][1], 25) + 60
+    s.add(f'<line x1="{x}" y1="{ly - 9}" x2="{x + 60}" y2="{ly - 9}" stroke="{C_FREE}" stroke-width="7" '
+          f'stroke-linecap="round"/>')
+    dot(s, x + 30, ly - 9, C_FREE, True, 10)
+    s.text(x + 80, ly, "chấm: chênh lệch; đoạn ngang: khoảng tin cậy 95%", 25, DIM)
+    s.text(60, ly + 56, "Đoạn ngang không cắt vạch 0 nghĩa là chênh lệch đó lớn hơn mức nhiễu của tập câu hỏi.",
+           25, DIM)
+    return s.render()
+
+
+_RESULT_CACHE: dict = {}
+
+
+def load_results(cfg, a) -> list[dict]:
+    """Đọc kết quả một lần cho mọi hình kết quả trong cùng lệnh, và in tương quan hạng để đối chiếu với báo cáo."""
+    from src.common.config import path_of
+
+    if "student" not in cfg:                             # các hình khác không cần cấu hình mô hình học
+        cfg = load_config(student=a.student)
+    tag = f"{cfg['student']['key']}_base"
+    results = resolve_path(cfg, a.results) if a.results else path_of(cfg, "out_results") / "eval" / tag
+    seldir = resolve_path(cfg, a.seldir) if a.seldir else path_of(cfg, "data_stage_b") / tag
+    key = (str(results), str(seldir), tuple(a.seeds or ()))
+    if key not in _RESULT_CACHE:
+        rows = result_rows(results, seldir, a.seeds)
+        _RESULT_CACHE[key] = rows
+        for r in rows:
+            ci = "" if r["diff"] is None else f"  so với Correct-Only {r['diff']:+.1f} [{r['lo']:+.1f}; {r['hi']:+.1f}]"
+            print(f"  {r['tag']:<24} {r['seeds']} seed  Qwen-72B {r['share']:5.1f}%  Acc@4 {r['acc']:.1f}{ci}")
+        if len(rows) > 2:
+            rho = spearman_rho([r["share"] for r in rows], [r["acc"] for r in rows])
+            print(f"Spearman giữa tỷ lệ chuỗi Qwen-72B và Acc@4 trên MATH-500: {rho:.2f} trên {len(rows)} tập")
+    return _RESULT_CACHE[key]
+
+
 # ================================================================ Hình 3: ví dụ chọn lọc
 def build_selection(*_args, **_kw) -> str:
     raise SystemExit(
@@ -516,17 +816,26 @@ FIGURES = {
     "judge": ("figA6_judge", lambda a, cfg: build_judge(cfg, a.workdir)),
     "distance": ("figA8_distance", lambda a, cfg: build_distance(cfg, a.workdir)),
     "correlation": ("figB1_correlation", lambda a, cfg: build_correlation(cfg, a.workdir, a.fit)),
+    # Hình kết quả (thêm 12/10), đọc kết quả đánh giá và select.<tên>.json; gọi gộp bằng `results`
+    "teacher_share": ("fig3_teacher_share", lambda a, cfg: build_teacher_share(load_results(cfg, a), "en")),
+    "teacher_share_vi": ("figC2_teacher_share_vi", lambda a, cfg: build_teacher_share(load_results(cfg, a), "vi")),
+    "forest": ("figC1_forest_vi", lambda a, cfg: build_forest(load_results(cfg, a))),
 }
 REPORT = ["teachers", "truncation", "lengths", "judge", "distance", "correlation"]
+RESULTS = ["teacher_share", "teacher_share_vi", "forest"]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("figure", choices=list(FIGURES) + ["all", "report"])
+    ap.add_argument("figure", choices=list(FIGURES) + ["all", "report", "results"])
     ap.add_argument("--outdir", default="outputs/figures")
     ap.add_argument("--stats", default="data/stage_a/stats.json", help="stats.json cho Hình 2")
     ap.add_argument("--workdir", default="data/stage_a", help="thư mục dữ liệu cho các hình báo cáo")
     ap.add_argument("--fit", default="fit.qwen1_5b_base.jsonl", help="file điểm b1 cho hình tương quan")
+    ap.add_argument("--student", default="qwen1_5b", help="hình kết quả: mô hình học (qwen1_5b, qwen7b)")
+    ap.add_argument("--seeds", type=int, nargs="+", help="hình kết quả: chỉ lấy các seed này (mặc định mọi seed có)")
+    ap.add_argument("--results", help="hình kết quả: thư mục kết quả, mặc định outputs/results/eval/<student>_base")
+    ap.add_argument("--seldir", help="hình kết quả: thư mục select.*.json, mặc định data/stage_b/<student>_base")
     args = ap.parse_args(argv)
 
     cfg = load_config()
@@ -535,6 +844,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         names = ["pipeline", "distribution"]
     elif args.figure == "report":
         names = REPORT
+    elif args.figure == "results":
+        names = RESULTS
     else:
         names = [args.figure]
     for key in names:
