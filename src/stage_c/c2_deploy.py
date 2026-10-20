@@ -158,10 +158,64 @@ def http_json(url: str, payload: Mapping | None = None, timeout: float = 900.0) 
                          f"`ollama serve` ở một cửa sổ khác)?") from None
 
 
+REPEAT_ABORT = "repeat_limit"     # done_reason ghi cho lượt Ollama tự cắt vì lặp một token quá nhiều lần
+
+
+def is_repeat_abort(message: str) -> bool:
+    """Ollama từ 0.40 tự dừng một lượt sinh khi mô hình lặp lại một token quá nhiều lần ('token repeat limit')."""
+    return "repeat limit" in (message or "").lower()
+
+
+def stream_generate(base_url: str, model: str, prompt: str, options: Mapping, timeout: float = 1800.0) -> dict:
+    """Một lượt sinh ở chế độ raw, nhận văn bản theo dòng (stream). Nhờ vậy khi Ollama cắt ngang lượt sinh vì lặp
+    (lỗi 'token repeat limit'), vẫn giữ được phần văn bản đã sinh để chấm như c1_evaluate chấm một lượt chạy tới trần.
+    Lỗi khác thì dừng hẳn như trước."""
+    payload = {"model": model, "prompt": prompt, "raw": True, "stream": True, "options": dict(options),
+               "keep_alive": "30m"}
+    req = urllib.request.Request(f"{base_url}/api/generate", data=json.dumps(payload).encode("utf-8"),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    parts, final, err = [], {}, None
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            for line in r:
+                if not line.strip():
+                    continue
+                obj = json.loads(line.decode("utf-8"))
+                if obj.get("error"):
+                    err = str(obj["error"])
+                    break
+                parts.append(obj.get("response", ""))
+                if obj.get("done"):
+                    final = obj
+                    break
+    except urllib.error.HTTPError as e:
+        err = e.read().decode("utf-8", "replace")
+    except urllib.error.URLError as e:
+        raise SystemExit(f"Không gọi được Ollama ở {base_url}: {e}. Ollama đã chạy chưa?") from None
+    if err is not None:
+        if not is_repeat_abort(err):
+            raise SystemExit(f"Ollama trả lỗi ở {base_url}/api/generate: {err[:300]}")
+        return {"text": "".join(parts), "done_reason": REPEAT_ABORT, "eval_count": len(parts), "eval_s": 0.0,
+                "prompt_count": 0, "prompt_s": 0.0, "load_s": 0.0, "total_s": 0.0}
+    return _numbers({**final, "response": "".join(parts)})
+
+
 def generate(base_url: str, model: str, prompt: str, options: Mapping, post: Callable = http_json) -> dict:
-    """Một lượt sinh ở chế độ raw. Trả về văn bản và các số đo Ollama báo (thời gian tính bằng giây)."""
+    """Một lượt sinh ở chế độ raw. Trả về văn bản và các số đo Ollama báo (thời gian tính bằng giây). Với Ollama
+    thật thì nhận theo dòng (stream_generate); post khác http_json chỉ dùng trong bài kiểm thử."""
+    if post is http_json:
+        return stream_generate(base_url, model, prompt, options)
     r = post(f"{base_url}/api/generate", {"model": model, "prompt": prompt, "raw": True, "stream": False,
                                           "options": dict(options), "keep_alive": "30m"})
+    if r.get("error"):
+        if not is_repeat_abort(r["error"]):
+            raise SystemExit(f"Ollama trả lỗi: {r['error']}")
+        return {"text": r.get("response", ""), "done_reason": REPEAT_ABORT, "eval_count": int(r.get("eval_count") or 0),
+                "eval_s": 0.0, "prompt_count": 0, "prompt_s": 0.0, "load_s": 0.0, "total_s": 0.0}
+    return _numbers(r)
+
+
+def _numbers(r: Mapping) -> dict:
     ns = 1e-9
     return {"text": r.get("response", ""), "done_reason": r.get("done_reason"),
             "eval_count": int(r.get("eval_count") or 0), "eval_s": (r.get("eval_duration") or 0) * ns,
@@ -170,11 +224,17 @@ def generate(base_url: str, model: str, prompt: str, options: Mapping, post: Cal
 
 
 def to_row(qid: str, sample: int, gold: str, g: Mapping, cap: int) -> dict:
-    """Một dòng kết quả cùng định dạng c1_evaluate. 'stopped' là dừng vì token kết thúc, không phải vì chạm trần."""
+    """Một dòng kết quả cùng định dạng c1_evaluate. 'stopped' là dừng vì token kết thúc, không phải vì chạm trần.
+
+    Lượt bị Ollama cắt vì lặp được chấm trên phần văn bản đã sinh và ghi n_tokens = trần: ở c1_evaluate (PyTorch)
+    một lượt lặp như vậy chạy tới trần rồi được chấm như bình thường, nên tính nó là một lượt chạm trần thì tỷ lệ
+    chạm trần của hai bản so được với nhau. Số lượt như vậy được đếm riêng (repeat_aborts) để báo cáo."""
     correct, pred = c1.grade_answer(BENCH, g["text"], gold)
+    aborted = g["done_reason"] == REPEAT_ABORT
     stopped = g["done_reason"] == "stop" and g["eval_count"] < cap
-    return {"qid": qid, "sample": sample, "correct": correct, "pred": pred, "gold": gold, "n_tokens": g["eval_count"],
-            "stopped": stopped, "done_reason": g["done_reason"], "text": g["text"]}
+    return {"qid": qid, "sample": sample, "correct": correct, "pred": pred, "gold": gold,
+            "n_tokens": cap if aborted else g["eval_count"], "stopped": stopped and not aborted,
+            "done_reason": g["done_reason"], "text": g["text"]}
 
 
 def parse_runners(ps_out: str, gguf_blob: str | None = None) -> dict:
@@ -383,7 +443,9 @@ def step_eval(cfg: Mapping, name: str, url: str, questions: Sequence[Mapping], t
                     took = max(time.time() - t0, 1e-9)
                     log(f"[c2] eval: {n_done}/{len(todo)} lượt | {n_tok / took:.0f} token/giây cả máy | "
                         f"còn khoảng {(len(todo) - n_done) * took / n_done / 60:.0f} phút")
-    res = c1.summarise(BENCH, questions, read_jsonl(out_path), cfg)
+    rows = read_jsonl(out_path)
+    res = c1.summarise(BENCH, questions, rows, cfg)
+    res["repeat_aborts"] = sum(r.get("done_reason") == REPEAT_ABORT for r in rows)
     took = time.time() - t0
     res["seconds_this_run"] = round(took, 1)
     res["tokens_per_second_all_workers"] = round(n_tok / took, 1) if n_done and took > 0 else None
@@ -493,7 +555,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "versus_reference": v})
             line = (f"[c2] eval {quant}: Acc@4 {100 * res['acc@4']:.1f}, Pass@4 {100 * res['pass@4']:.1f} | "
                     f"{res['n_questions']} câu | trung bình {res['mean_new_tokens']:.0f} token, chạm trần "
-                    f"{100 * res['hit_cap_share']:.0f}%, không có \\boxed {100 * res['no_boxed_share']:.0f}%")
+                    f"{100 * res['hit_cap_share']:.0f}% (trong đó {res['repeat_aborts']} lượt Ollama cắt vì lặp), không có "
+                    f"\\boxed {100 * res['no_boxed_share']:.0f}%")
             if v:
                 line += (f" | bản gốc {100 * v['reference_acc4']:.1f}, chênh {100 * v['diff']:+.1f} "
                          f"(từ {100 * v['lo']:+.1f} đến {100 * v['hi']:+.1f}) trên {v['n']} câu")

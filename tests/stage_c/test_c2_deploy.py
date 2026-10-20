@@ -187,3 +187,80 @@ def test_jinja_template_from_gguf_is_checked_by_rendering_it():
     assert c2.template_renders_training_prompt(QWEN_JINJA, tok)
     assert not c2.template_renders_training_prompt(QWEN_JINJA.replace("assistant\\n", "assistant"), tok)
     assert not c2.template_renders_training_prompt("{{ .Prompt }}", tok)
+
+
+# ---------------------------------------------------------------- sửa 20/10 tối: Ollama cắt lượt sinh vì lặp token
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+def _serve(mode):
+    """Máy chủ giả trả lời /api/generate theo dòng như Ollama, với bốn kiểu: bình thường, lỗi lặp giữa dòng,
+    lỗi 500 vì lặp, lỗi 500 khác."""
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            assert body["stream"] is True and body["raw"] is True
+            if mode.startswith("500"):
+                msg = "prediction aborted, token repeat limit reached" if mode == "500_repeat" else "model not found"
+                data = json.dumps({"error": msg}).encode()
+                self.send_response(500)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            self.send_response(200)
+            self.end_headers()
+            for piece in ("Step 1. ", "So ", "\\boxed{2}"):
+                self.wfile.write((json.dumps({"response": piece, "done": False}) + "\n").encode())
+            if mode == "midstream_repeat":
+                self.wfile.write((json.dumps({"error": "prediction aborted, token repeat limit reached"}) + "\n").encode())
+            else:
+                self.wfile.write((json.dumps({"response": "", "done": True, "done_reason": "stop", "eval_count": 3,
+                                              "eval_duration": 3 * 10 ** 7}) + "\n").encode())
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, f"http://127.0.0.1:{srv.server_address[1]}"
+
+
+@pytest.mark.parametrize("mode", ["ok", "midstream_repeat", "500_repeat", "500_other"])
+def test_stream_generate_keeps_partial_text_when_ollama_aborts_a_loop(mode):
+    srv, url = _serve(mode)
+    try:
+        if mode == "500_other":
+            with pytest.raises(SystemExit):
+                c2.stream_generate(url, "m", "p", {})
+            return
+        g = c2.stream_generate(url, "m", "p", {})
+    finally:
+        srv.shutdown()
+    if mode == "ok":
+        assert g["text"] == "Step 1. So \\boxed{2}" and g["done_reason"] == "stop" and g["eval_count"] == 3
+    elif mode == "midstream_repeat":
+        assert g["text"] == "Step 1. So \\boxed{2}" and g["done_reason"] == c2.REPEAT_ABORT
+    else:
+        assert g["text"] == "" and g["done_reason"] == c2.REPEAT_ABORT
+
+
+def test_aborted_loop_is_graded_on_its_text_and_counted_as_hitting_the_cap():
+    g = {"text": "x \\boxed{2} again again", "done_reason": c2.REPEAT_ABORT, "eval_count": 900}
+    row = c2.to_row("q", 0, "2", g, 3072)
+    assert row["correct"] is True and row["n_tokens"] == 3072 and row["stopped"] is False
+
+
+def test_eval_counts_repeat_aborts_instead_of_stopping(tmp_path):
+    class Looping(FakeOllama):
+        def __call__(self, url, payload=None, timeout=0):
+            if payload and "LONG" in payload["prompt"]:
+                self.calls.append(payload)
+                return {"error": "prediction aborted, token repeat limit reached"}
+            return super().__call__(url, payload, timeout)
+
+    res = c2.step_eval(_cfg(), "m", "http://x", QUESTIONS, FakeTok(), 4000, tmp_path / "m.jsonl", workers=2,
+                       post=Looping(), log=lambda *_: None)
+    assert res["repeat_aborts"] == 4 and res["hit_cap_share"] == pytest.approx(1 / 3)
+    assert res["acc@4"] == pytest.approx(1 / 3)
