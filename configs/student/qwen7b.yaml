@@ -26,3 +26,9 @@ project:
 # Không phương án nào ở trên cần LocalNat, nên b1_fit bỏ nó (giữ GRAPE và LARK vì chung một lượt forward).
 signals:
   skip_local_nat: true
+
+# Sửa 20/10: đánh giá 7B (QLoRA 4-bit, trần 0,9) hết bộ nhớ ngay lô đầu với cỡ lô sinh 64, 32, 16 của base.yaml.
+# Mô hình 7 tỷ cần khoảng gấp đôi bộ nhớ đệm KV mỗi token so với 1,5 tỷ nên giảm một nửa. Cỡ lô chỉ đổi tốc độ và
+# dòng số ngẫu nhiên, không đổi phân phối của văn bản sinh ra; summary.json ghi lại cỡ lô đã dùng.
+eval:
+  gen_batch: [32, 16, 8]

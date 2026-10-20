@@ -39,6 +39,7 @@ trong lô: lô càng đầy càng nhanh. Dòng tiến độ in số mili giây m
 from __future__ import annotations
 
 import argparse
+import gc
 import re
 import subprocess
 import sys
@@ -222,11 +223,16 @@ def _generate_batch(model, tok, seqs: Sequence[Sequence[int]], max_new: int, sto
     except torch.OutOfMemoryError:
         if len(seqs) == 1:
             raise
-        torch.cuda.empty_cache()
-        half = len(seqs) // 2
-        a, ra = _generate_batch(model, tok, seqs[:half], max_new, stops, ev, seed)
-        b, rb = _generate_batch(model, tok, seqs[half:], max_new, stops, ev, seed + 1)
-        return a + b, ra + rb + 1
+    # Chia đôi lô ở NGOÀI khối except (sửa 20/10). Trong khối except, Python còn giữ lỗi cùng các khung gọi của
+    # model.generate, tức giữ cả bộ nhớ đệm KV của lần thử hỏng; gọi đệ quy ở đó thì mỗi nửa lô vẫn phải chen vào
+    # chỗ bộ nhớ đã đầy, chia tới lô 1 vẫn hết bộ nhớ (gặp ở đánh giá 7B ngày 20/10). Ra khỏi khối except thì phần đó
+    # được thả, rồi mới dọn bộ nhớ đệm của PyTorch.
+    gc.collect()
+    torch.cuda.empty_cache()
+    half = len(seqs) // 2
+    a, ra = _generate_batch(model, tok, seqs[:half], max_new, stops, ev, seed)
+    b, rb = _generate_batch(model, tok, seqs[half:], max_new, stops, ev, seed + 1)
+    return a + b, ra + rb + 1
 
 
 def generate_staged(model, tok, prompts: Sequence[Sequence[int]], plan: Sequence[tuple[int, int]], stops: Sequence[int],
