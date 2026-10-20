@@ -38,8 +38,9 @@ from src.common.io_utils import iter_jsonl, read_json
 METRICS = ("acc@4", "pass@4")
 BENCH_LABEL = {"math500": "MATH-500", "amc23": "AMC 2023", "aime24": "AIME 2024", "aime25": "AIME 2025",
                "gsm8k": "GSM8K", "bbh": "BBH", "val": "Kiểm định"}
-ORDER = ["no_filter", "correct_only", "token_length", "grape", "local_naturalness", "rsr", "lark", "qd_rsr",
-         "fit_only", "quality_only", "diversity_only", "fit_quality", "fit_diversity", "no_prefilter"]
+ORDER = ["no_filter", "correct_only", "token_length", "grape", "local_naturalness", "rsr", "lark", "fq_select",
+         "quality_only", "quality_within_teacher", "qd_rsr", "fit_only", "diversity_only", "fit_quality",
+         "fit_diversity", "no_prefilter"]
 MUST_MATCH = ("n_samples", "temperature", "top_p", "top_k", "max_new_tokens", "seed", "bbh_per_task")
 _SEED_DIR = re.compile(r"seed(\d+)")
 

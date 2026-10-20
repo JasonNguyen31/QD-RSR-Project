@@ -522,8 +522,12 @@ RESULT_SETS = {
     "qd_rsr.k3.lam0.4": ("λ = 0.4 (not selected)", "λ = 0,4 (không được chọn)", "student"),
     "teacher_qwen_first.k3": ("Prefer Qwen-72B", "Ưu tiên Qwen-72B", "teacher"),
     "teacher_qwen_last.k3": ("Avoid Qwen-72B", "Tránh Qwen-72B", "teacher"),
+    "fq_select.k3": ("FQ-Select", "FQ-Select", "student"),
+    "quality_only.k3": ("Quality-only", "Quality-only", "free"),
+    "quality_within_teacher.k3": ("Quality within teacher", "Chất lượng trong từng mô hình dạy", "teacher"),
 }
-OURS, BASE = "fit_quality.k3", "correct_only.k3"
+# Tập in đậm là phương án đề xuất: FQ-Select từ 20/10 (trước đó là fit_quality.k3 của hướng QD-RSR cũ).
+OURS, BASE = "fq_select.k3", "correct_only.k3"
 GROUP_COLOR = {"student": C_STUDENT, "teacher": C_TEACHER, "free": C_FREE}
 RESULT_TEXT = {
     "en": {"x": "Share of Qwen2.5-72B trajectories in the training set (%)", "y": "MATH-500 Acc@4 (%)",

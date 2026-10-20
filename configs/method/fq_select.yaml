@@ -1,0 +1,17 @@
+# FQ-Select (Familiarity–Quality Select), phương án đề xuất từ 19/10/2026. Bài gốc là GRAPE (Zhang và cộng sự,
+# arXiv 2502.04194): GRAPE chỉ chọn theo mức quen thuộc với mô hình học, FQ-Select thêm điểm chất lượng ngay ở
+# bước chọn.
+#
+# Trong mỗi câu, các chuỗi đúng được xếp hạng riêng theo hai tín hiệu:
+#   grape  log xác suất trung bình mỗi token của lời giải dưới mô hình học bản nền (cột grape của file fit)
+#   qual   điểm chất lượng 0,5 quy tắc + 0,5 giám khảo, đúng cột mà Quality-only dùng
+# Thứ hạng đổi về [0, 1] bằng hạng/(n − 1), cộng với trọng số CỐ ĐỊNH 0,5 và 0,5 (chốt trước khi có kết quả, không
+# dò), lấy 3 chuỗi có tổng cao nhất. Cộng thay cho nhân để một điểm thấp không loại hẳn lời giải. Câu chỉ có đúng 3
+# chuỗi đúng thì lấy hết như mọi phương án. Hoà ở vị trí thứ 3 thì phá theo thứ tự cố định (sha256 theo random_seed),
+# không nghiêng về tín hiệu nào, nên trọng số thật vẫn là 0,5 và 0,5.
+select:
+  name: fq_select
+  pool: correct
+  rule: rank_sum
+  signals: [grape, qual]
+  rank_weights: [0.5, 0.5]

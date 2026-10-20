@@ -145,15 +145,15 @@ def test_order_key_is_stable_and_depends_on_seed():
 def test_every_config_file_declares_a_valid_rule():
     base = load_config(student="qwen1_5b")
     todo = b2.method_list(base, Path(base.root))
-    assert len(todo) == 14                                    # 8 phương án, 6 biến thể
+    assert len(todo) == 15                                    # 9 phương án (thêm fq_select 20/10), 6 biến thể
     names = set()
     for m, a in todo:
         cfg = load_config(method=m, ablation=a, student="qwen1_5b")
-        assert cfg.select.rule in ("random", "topk", "objective")
+        assert cfg.select.rule in ("random", "topk", "objective", "rank_sum")
         assert cfg.select.pool in ("correct",) + b2.EXTENDED_POOLS
         assert cfg.select.name == (a or m)                    # tên file train khớp tên file cấu hình
         names.add(b2.selection_tag(cfg))
-    assert len(names) == 14
+    assert len(names) == 15
     seven = load_config(student="qwen7b")
     assert [m for m, _ in b2.method_list(seven, Path(seven.root))] == seven.methods
 
@@ -355,7 +355,7 @@ def test_all_writes_one_shared_question_set_with_k_rows_each(tmp_path, capsys):
     assert code == 1 and "CHƯA CHẠY ĐƯỢC no_prefilter" in printed          # chưa chấm bù chuỗi sai
     assert "CHƯA CHẠY ĐƯỢC local_naturalness" not in printed               # đã có điểm trên bước của GLM
     files = sorted(out.glob("train.*.jsonl"))
-    assert len(files) == 13 and (out / "train.local_naturalness.k3.jsonl").exists()
+    assert len(files) == 14 and (out / "train.local_naturalness.k3.jsonl").exists()   # 14 kể từ fq_select
     qsets = set()
     for f in files:
         rows = read_jsonl(f)

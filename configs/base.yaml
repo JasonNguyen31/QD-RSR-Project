@@ -85,6 +85,7 @@ signal_direction:
   local_nat: max
   lark: max                     # xếp theo ĝ (tính theo câu hỏi ở signals.add_lark), không phải Brier
   token_length: max
+  qual: max                     # cột Qual, dùng trong quy tắc rank_sum (FQ-Select, thêm 20/10)
   rule_quality: max
   llm_quality: max
 

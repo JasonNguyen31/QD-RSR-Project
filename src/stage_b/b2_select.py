@@ -8,6 +8,8 @@
     python -m src.stage_b.b2_select --student qwen7b --all                        # ba phương án của 7B
     python -m src.stage_b.b2_select --student qwen1_5b --report                   # bảng I.9 và độ trùng
     python -m src.stage_b.b2_select --student qwen1_5b --report --versus qwen7b   # 7B chọn khác 1,5B bao nhiêu
+    python -m src.stage_b.b2_select --student qwen1_5b --method fq_select         # phương án đề xuất (từ 20/10)
+    python -m src.stage_b.b2_select --student qwen1_5b --method quality_within_teacher   # phép đối chứng H3
 
 Đọc  <workdir>/candidates.jsonl, questions.jsonl, quality.jsonl, embeddings.npz, fit.<student>_base.jsonl
      Hai kho mở rộng đọc thêm trajectories*.jsonl (chỉ có trên máy giữ dữ liệu gốc):
@@ -22,7 +24,7 @@ Ghi  data/stage_b/<student>_base/train.<tên>.jsonl    một dòng mỗi chuỗi
 Tên file do selection_tag quyết định: <phương án>.k<k>, thêm .lam<λ> khi tập chọn phụ thuộc λ. b3_train phải
 gọi đúng hàm đó để không đọc nhầm file của một λ cũ.
 
-Bốn quy tắc chọn (khoá select.rule trong configs/method và configs/ablation):
+Sáu quy tắc chọn (khoá select.rule trong configs/method và configs/ablation):
     random     k chuỗi đầu theo thứ tự cố định (xem dưới). Correct-Only, No-Filter.
     topk       k chuỗi đứng đầu theo một tín hiệu. CHỈ RSR LÀ CỰC TIỂU, chiều lấy từ signal_direction.
                Tín hiệu local_nat_k<k> (thêm 11/10) không nằm trong file fit mà đọc từ localnat.<student>_base.glm.jsonl
@@ -33,6 +35,16 @@ Bốn quy tắc chọn (khoá select.rule trong configs/method và configs/ablat
                hình học. Đây là phép ĐỐI CHỨNG, không phải phương án: nó trả lời câu hỏi "một tín hiệu thắng vì
                bản thân tín hiệu, hay vì nó chọn chuỗi của mô hình dạy nào". File cấu hình của phép đối chứng
                mang khoá select.control: true và không nằm trong --all.
+    rank_sum   (thêm 20/10, FQ-Select) trong mỗi câu, xếp hạng riêng các chuỗi theo từng tín hiệu trong
+               select.signals, đổi thứ hạng về [0, 1] bằng hạng/(n − 1) với n là số chuỗi đúng của câu (1 là tốt
+               nhất theo chiều tối ưu, hoà nhận hạng trung bình), cộng theo select.rank_weights rồi lấy k chuỗi có
+               tổng cao nhất. Tín hiệu 'qual' là cột Qual (giống Quality-only), các tên khác là cột của file fit.
+               Tổng được làm tròn 9 chữ số để hai tổng bằng nhau về toán không bị tách vì sai số dấu phẩy động;
+               hoà ở vị trí thứ k thì phá theo thứ tự cố định như mọi phương án.
+    quality_within_teacher  (thêm 20/10, phép đối chứng của H3) lấy đúng lần bốc của Correct-Only (k chuỗi đầu
+               theo thứ tự cố định, cùng random_seed) để biết mỗi mô hình dạy được bao nhiêu chỗ, rồi trong mỗi mô
+               hình dạy lấy đúng ngần ấy chuỗi có Qual cao nhất thay vì các chuỗi đã bốc. Tỷ lệ mô hình dạy của
+               từng câu vì thế giống hệt Correct-Only; chỉ khác ở chỗ chuỗi nào của mô hình dạy đó được lấy.
 
 Các quy ước đã chốt mà mã này thực thi:
   - Chuỗi không có điểm giám khảo (qual = null trong quality.jsonl) bị loại khỏi kho của MỌI phương án, kể cả
@@ -296,6 +308,73 @@ def teacher_lists(cfg: Mapping) -> tuple[list[str], list[str]]:
     return prefer, avoid
 
 
+def norm_ranks(values: np.ndarray, direction: str) -> np.ndarray:
+    """Thứ hạng trong một câu, đổi về [0, 1] bằng hạng/(n − 1): 1 là chuỗi tốt nhất theo chiều tối ưu, 0 là kém
+    nhất. Các giá trị bằng nhau nhận hạng trung bình của nhóm. Chỉ có một chuỗi thì trả về 1."""
+    v = np.asarray(values, dtype=float)
+    if np.isnan(v).any():
+        raise SystemExit("Có điểm NaN trong tín hiệu dùng để xếp hạng; kiểm tra file fit hoặc quality.jsonl.")
+    s = v if direction == "max" else -v
+    n = len(s)
+    if n == 1:
+        return np.ones(1)
+    order = np.argsort(s, kind="stable")
+    ranks = np.empty(n)
+    i = 0
+    while i < n:
+        j = i
+        while j + 1 < n and s[order[j + 1]] == s[order[i]]:
+            j += 1
+        ranks[order[i:j + 1]] = (i + j) / 2
+        i = j + 1
+    return ranks / (n - 1)
+
+
+def signal_values(q: Mapping, name: str) -> np.ndarray:
+    """Giá trị của một tín hiệu cho mọi chuỗi của câu: 'qual' là cột Qual, tên khác là cột của file fit."""
+    if name == "qual":
+        if "qual" not in q:
+            raise SystemExit(f"Câu {q['qid']} không có Qual cho mọi chuỗi; kho này chưa đủ tín hiệu.")
+        return q["qual"]
+    col = SIGNAL_COLUMN.get(name, name)
+    if col not in q["signals"]:
+        raise SystemExit(f"Câu {q['qid']}: không có tín hiệu '{col}' cho mọi chuỗi (file fit hoặc file điểm thiếu cột).")
+    return q["signals"][col]
+
+
+def rank_spec(cfg: Mapping) -> tuple[list[str], list[float], list[str]]:
+    """Đọc và kiểm select.signals, select.rank_weights của quy tắc rank_sum. Trả về (tên, trọng số, chiều)."""
+    spec = cfg["select"]
+    names = [str(x) for x in (spec.get("signals") or [])]
+    weights = [float(x) for x in (spec.get("rank_weights") or [])]
+    if not names or len(names) != len(weights) or len(set(names)) != len(names):
+        raise SystemExit(f"Phương án {spec['name']}: quy tắc rank_sum cần select.signals và select.rank_weights cùng "
+                         f"độ dài, tên không trùng (nhận {names} và {weights}).")
+    if min(weights) < 0 or abs(sum(weights) - 1.0) > 1e-9:
+        raise SystemExit(f"Phương án {spec['name']}: rank_weights phải không âm và cộng lại bằng 1 (nhận {weights}).")
+    return names, weights, [direction_of(cfg, n) for n in names]
+
+
+def pick_rank_sum(q: Mapping, k: int, names: Sequence[str], weights: Sequence[float],
+                  directions: Sequence[str]) -> dict:
+    """k chuỗi có tổng thứ hạng chuẩn hoá (có trọng số) cao nhất. Hoà thì giữ thứ tự cố định sẵn có."""
+    score = sum(w * norm_ranks(signal_values(q, n), d) for n, w, d in zip(names, weights, directions))
+    return pick_topk(np.round(np.asarray(score, dtype=float), 9), k, "max")
+
+
+def pick_quality_within_teacher(teachers: Sequence[str], qual: np.ndarray, k: int) -> dict:
+    """Lần bốc của Correct-Only (k chuỗi đầu theo thứ tự cố định) quyết định mỗi mô hình dạy được bao nhiêu chỗ;
+    trong mỗi mô hình dạy, lấy ngần ấy chuỗi có Qual cao nhất (hoà thì giữ thứ tự cố định)."""
+    quota = Counter(teachers[:k])
+    idx, tie = [], False
+    for t, c in quota.items():
+        mine = [i for i, x in enumerate(teachers) if x == t]
+        p = pick_topk(np.asarray(qual, dtype=float)[mine], c, "max")
+        idx += [mine[j] for j in p["idx"]]
+        tie = tie or p["tie"]
+    return {"idx": sorted(idx), "tie": tie}
+
+
 def greedy_set(per: np.ndarray, dist: np.ndarray, k: int, lam: float) -> list[int]:
     """Tham lam theo độ lợi biên của F, bắt đầu từ chuỗi có Fit^a·Qual^b lớn nhất. Chỉ để phân tích phụ."""
     chosen = [int(np.argmax(per))]
@@ -331,6 +410,7 @@ def select_all(questions: Mapping[str, Mapping], cfg: Mapping) -> dict:
     spec, sel = cfg["select"], cfg["selection"]
     k, rule = int(sel["k"]), spec["rule"]
     prefer, avoid = teacher_lists(cfg) if rule == "teacher" else ([], [])
+    ranks = rank_spec(cfg) if rule == "rank_sum" else None
     picks = {}
     for qid, q in questions.items():
         if len(q["tids"]) < k:
@@ -353,8 +433,15 @@ def select_all(questions: Mapping[str, Mapping], cfg: Mapping) -> dict:
             p = pick_objective(q, k, float(sel["a"]), float(sel["b"]), float(sel["lambda_div"]), sel["div_scale"])
         elif rule == "teacher":
             p = pick_teacher(q["teacher"], k, prefer, avoid)
+        elif rule == "rank_sum":
+            p = pick_rank_sum(q, k, *ranks)
+        elif rule == "quality_within_teacher":
+            if "qual" not in q:
+                raise SystemExit(f"Câu {qid} không có Qual cho mọi chuỗi; quy tắc quality_within_teacher cần kho đủ tín hiệu.")
+            p = pick_quality_within_teacher(q["teacher"], q["qual"], k)
         else:
-            raise SystemExit(f"select.rule không hợp lệ: {rule!r} (random, topk, objective, teacher)")
+            raise SystemExit(f"select.rule không hợp lệ: {rule!r} (random, topk, objective, teacher, rank_sum, "
+                             f"quality_within_teacher)")
         if spec.get("weights", "uniform") == "lark_soft":
             w = lark_weights([float(x) for x in q["signals"]["lark"]], k)
             if not {i for i, x in enumerate(w) if x > 0} <= set(p["idx"]):
@@ -535,6 +622,23 @@ def localnat_meta(inp: "Inputs", spec: Mapping, picks: Mapping, questions: Mappi
             "steps_source_selected": dict(sorted(Counter(r.get("steps_source", "glm") for r in chosen).items()))}
 
 
+def rank_meta(cfg: Mapping, picks: Mapping, questions: Mapping) -> dict:
+    """Với quy tắc rank_sum: ghi tín hiệu, trọng số và thứ hạng chuẩn hoá trung bình của các chuỗi ĐƯỢC CHỌN theo
+    từng tín hiệu (1 là luôn lấy chuỗi tốt nhất, 0,5 là ngang chọn ngẫu nhiên), để paper nói được tập chọn nghiêng
+    về tín hiệu nào. Quy tắc khác thì không ghi gì, nên file select.<tên>.json của các tập cũ không đổi."""
+    if cfg["select"]["rule"] != "rank_sum":
+        return {}
+    names, weights, dirs = rank_spec(cfg)
+    means = {}
+    for n, d in zip(names, dirs):
+        vals = []
+        for qid, p in picks.items():
+            r = norm_ranks(signal_values(questions[qid], n), d)
+            vals.extend(float(r[i]) for i in p["idx"] if len(r) > 1)
+        means[n] = statistics.mean(vals) if vals else None
+    return {"signals": names, "rank_weights": weights, "mean_norm_rank": means}
+
+
 def run_one(inp: Inputs, cfg: Mapping, outdir: Path) -> dict:
     spec, sel = cfg["select"], cfg["selection"]
     k, tag = int(sel["k"]), selection_tag(cfg)
@@ -550,6 +654,7 @@ def run_one(inp: Inputs, cfg: Mapping, outdir: Path) -> dict:
                "student": cfg["student"]["base_model_id"], "blocked": spec.get("blocked"),
                "prefer": spec.get("prefer"), "avoid": spec.get("avoid"), "control": bool(spec.get("control")),
                **localnat_meta(inp, spec, picks, questions),
+               **rank_meta(cfg, picks, questions),
                **summarize(questions, picks, k),
                "train_file": path.name, "md5": hashlib.md5(path.read_bytes()).hexdigest()}
     write_json(outdir / f"select.{tag}.json", summary)

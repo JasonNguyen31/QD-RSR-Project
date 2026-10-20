@@ -1,0 +1,13 @@
+# ĐỐI CHỨNG, không phải phương án (thêm 20/10/2026, giả thuyết H3). Tách tác dụng của điểm chất lượng khỏi tác dụng
+# của việc lệch về một mô hình dạy.
+#
+# Ở mỗi câu, lấy đúng lần bốc của Correct-Only (cùng random_seed, cùng thứ tự cố định) để biết mỗi mô hình dạy được
+# bao nhiêu chỗ, rồi trong mỗi mô hình dạy lấy ngần ấy chuỗi có Qual cao nhất thay vì các chuỗi đã bốc. Tỷ lệ mô hình
+# dạy của từng câu vì thế giống hệt Correct-Only. Nếu tập này hơn Correct-Only thì phần hơn đến từ chất lượng, không
+# phải từ việc chọn mô hình dạy. Qual là đúng cột mà Quality-only và FQ-Select dùng.
+# Không nằm trong b2_select --all; gọi riêng bằng --method quality_within_teacher.
+select:
+  name: quality_within_teacher
+  pool: correct
+  rule: quality_within_teacher
+  control: true
