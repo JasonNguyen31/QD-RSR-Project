@@ -76,6 +76,17 @@ python -m pytest tests/stage_a -q  # chỉ một nhóm
   lẫn bộ k hay mô hình khác; file fit không bị đụng tới. Trên GPU thật: `python -m src.stage_b.b1_localnat --selftest`.
 
 ## tools/
+- **test_check_grape_format.py** (thêm 26/10): công cụ kiểm định dạng GRAPE. Phần chạy mô hình được thay bằng bộ chấm
+  giả; giữ các điều sau: khuôn Question/Answer có đúng một `{question}` rồi `{answer}` ở cuối, dấu cách trước câu trả
+  lời chuyển sang đầu câu trả lời, đề và chuỗi mã hoá riêng rồi nối, cắt cùng độ dài tối đa với `b1_fit`; kho có cùng
+  chuỗi và cùng thứ tự cố định với `b2_select`; mẫu chỉ rút từ câu có hơn k chuỗi và tái lập được; tập top-k dùng
+  đúng `pick_topk` của b2; quy tắc 80% tính cả đúng 80%; sàn nhiễu (A so A') được báo cáo và cảnh báo khi tụt; từ chối
+  chạy bù lên file điểm của khuôn, mô hình hay cỡ mẫu khác; báo cáo chạy được không cần GPU.
+- **test_length_split.py** (thêm 26/10): công cụ tách phần chênh lệch Acc@4 do lượt chạm trần độ dài. Dữ liệu giả ghi đúng
+  dạng `c1_evaluate`. Giữ các điều sau: lượt chạm trần là lượt chưa dừng mà đã đủ trần token, đúng như
+  `hit_cap_share`; hai phần đóng góp (câu không bị cắt, câu có lượt chạm trần) luôn cộng đúng bằng Δ của mọi câu, kể cả
+  khi một nhóm rỗng; một câu bị cắt ở một seed bất kỳ thì coi là bị cắt khi trung bình qua seed; khoảng tin cậy là
+  `paired_bootstrap` của `eval_table`; từ chối so hai mô hình đánh giá với cài đặt khác nhau.
 - **test_audit_steps.py**, **test_compare_localnat.py** (thêm 05/10): hai công cụ đọc cho LocalNat. `audit_steps`
   đếm đúng loại ranh giới, nguồn bước, chuỗi hỏng thuộc câu chỉ có đúng k ứng viên, và không ghi gì ra đĩa.
   `compare_localnat` phải lộ ra trường hợp LocalNat chỉ là bản chép của GRAPE (tương quan 1, cùng tập top-k).
