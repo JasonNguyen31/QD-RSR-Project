@@ -87,7 +87,7 @@ signal_direction:
   token_length: max
   qual: max                     # cột Qual, dùng trong quy tắc rank_sum (FQ-Select, thêm 20/10)
   rule_quality: max
-  llm_quality: max
+  llm_quality: max              # điểm giám khảo thô, dùng trong fq_judge và fq_veto_judge (thêm 27/10)
 
 # ---------------------------------------------------------------- Huấn luyện (Giai đoạn B, bước b3)
 training:

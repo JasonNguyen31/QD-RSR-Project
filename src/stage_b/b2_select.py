@@ -336,6 +336,10 @@ def signal_values(q: Mapping, name: str) -> np.ndarray:
         if "qual" not in q:
             raise SystemExit(f"Câu {q['qid']} không có Qual cho mọi chuỗi; kho này chưa đủ tín hiệu.")
         return q["qual"]
+    if name == "llm_quality":                          # điểm giám khảo thô, nửa thứ hai của Qual (thêm 27/10)
+        if any(x is None for x in q["llm"]):
+            raise SystemExit(f"Câu {q['qid']} có chuỗi chưa có điểm giám khảo; kho này chưa đủ tín hiệu.")
+        return np.array([float(x) for x in q["llm"]])
     col = SIGNAL_COLUMN.get(name, name)
     if col not in q["signals"]:
         raise SystemExit(f"Câu {q['qid']}: không có tín hiệu '{col}' cho mọi chuỗi (file fit hoặc file điểm thiếu cột).")
@@ -373,6 +377,60 @@ def pick_quality_within_teacher(teachers: Sequence[str], qual: np.ndarray, k: in
         idx += [mine[j] for j in p["idx"]]
         tie = tie or p["tie"]
     return {"idx": sorted(idx), "tie": tie}
+
+
+def pick_signal_within_teacher(teachers: Sequence[str], values: np.ndarray, k: int, direction: str) -> dict:
+    """Như pick_quality_within_teacher nhưng với một tín hiệu bất kỳ: giữ đúng số chỗ của mỗi mô hình dạy trong lần
+    bốc của Correct-Only, trong mỗi mô hình dạy lấy các chuỗi tốt nhất theo tín hiệu (thêm 27/10)."""
+    quota = Counter(teachers[:k])
+    idx, tie = [], False
+    for t, c in quota.items():
+        mine = [i for i, x in enumerate(teachers) if x == t]
+        p = pick_topk(np.asarray(values, dtype=float)[mine], c, direction)
+        idx += [mine[j] for j in p["idx"]]
+        tie = tie or p["tie"]
+    return {"idx": sorted(idx), "tie": tie}
+
+
+def veto_count(n: int, k: int, drop: float) -> int:
+    """Số chuỗi bị loại: phần drop kém nhất (làm tròn xuống), nhưng luôn còn ít nhất k chuỗi."""
+    return max(0, min(n - k, int(np.floor(drop * n + 1e-9))))
+
+
+def pick_veto_topk(primary: np.ndarray, veto: np.ndarray, k: int, drop: float,
+                   primary_dir: str = "max", veto_dir: str = "max") -> dict:
+    """Quality làm điều kiện, không làm phần thưởng (thêm 27/10): loại veto_count chuỗi kém nhất theo tín hiệu loại,
+    rồi lấy k chuỗi tốt nhất theo tín hiệu chính trong phần còn lại. Hoà ở cả hai bước giữ thứ tự cố định."""
+    v, pr = np.asarray(veto, dtype=float), np.asarray(primary, dtype=float)
+    if np.isnan(v).any() or np.isnan(pr).any():
+        raise SystemExit("Có điểm NaN trong tín hiệu dùng để xếp hạng.")
+    n = len(v)
+    n_drop = veto_count(n, k, drop)
+    sv = v if veto_dir == "max" else -v
+    # chuỗi đứng TRƯỚC trong thứ tự cố định được ưu tiên giữ, nên trong nhóm hoà ta loại chuỗi đứng sau trước
+    worst_first = sorted(range(n), key=lambda i: (sv[i], -i))
+    dropped = set(worst_first[:n_drop])
+    keep = [i for i in range(n) if i not in dropped]
+    p = pick_topk(pr[keep], k, primary_dir)
+    veto_tie = bool(0 < n_drop < n and sv[worst_first[n_drop - 1]] == sv[worst_first[n_drop]])
+    return {"idx": sorted(keep[j] for j in p["idx"]), "tie": p["tie"] or veto_tie, "n_dropped": n_drop}
+
+
+def pick_veto_within_teacher(teachers: Sequence[str], primary: np.ndarray, veto: np.ndarray, k: int, drop: float,
+                             primary_dir: str = "max", veto_dir: str = "max") -> dict:
+    """Bước loại rồi chọn của FQ-Select, nhưng giữ đúng số chỗ của mỗi mô hình dạy trong lần bốc của Correct-Only
+    (thêm 29/10). Trong mỗi mô hình dạy có c chỗ và n_t chuỗi: loại min(n_t − c, floor(drop · n_t)) chuỗi kém nhất theo
+    tín hiệu loại, rồi lấy c chuỗi tốt nhất theo tín hiệu chính. Tỷ lệ mô hình dạy của từng câu giống hệt Correct-Only."""
+    quota = Counter(teachers[:k])
+    pr, v = np.asarray(primary, dtype=float), np.asarray(veto, dtype=float)
+    idx, tie, dropped = [], False, 0
+    for t, c in quota.items():
+        mine = [i for i, x in enumerate(teachers) if x == t]
+        p = pick_veto_topk(pr[mine], v[mine], c, drop, primary_dir, veto_dir)
+        idx += [mine[j] for j in p["idx"]]
+        tie = tie or p["tie"]
+        dropped += p["n_dropped"]
+    return {"idx": sorted(idx), "tie": tie, "n_dropped": dropped}
 
 
 def greedy_set(per: np.ndarray, dist: np.ndarray, k: int, lam: float) -> list[int]:
@@ -439,9 +497,21 @@ def select_all(questions: Mapping[str, Mapping], cfg: Mapping) -> dict:
             if "qual" not in q:
                 raise SystemExit(f"Câu {qid} không có Qual cho mọi chuỗi; quy tắc quality_within_teacher cần kho đủ tín hiệu.")
             p = pick_quality_within_teacher(q["teacher"], q["qual"], k)
+        elif rule == "signal_within_teacher":
+            p = pick_signal_within_teacher(q["teacher"], signal_values(q, spec["signal"]), k,
+                                           direction_of(cfg, spec["signal"]))
+        elif rule == "veto_within_teacher":
+            vname = spec.get("veto_signal", "qual")
+            p = pick_veto_within_teacher(q["teacher"], signal_values(q, spec["signal"]), signal_values(q, vname), k,
+                                         float(spec["veto_drop"]), direction_of(cfg, spec["signal"]),
+                                         direction_of(cfg, vname))
+        elif rule == "veto_topk":
+            vname = spec.get("veto_signal", "qual")
+            p = pick_veto_topk(signal_values(q, spec["signal"]), signal_values(q, vname), k,
+                               float(spec["veto_drop"]), direction_of(cfg, spec["signal"]), direction_of(cfg, vname))
         else:
             raise SystemExit(f"select.rule không hợp lệ: {rule!r} (random, topk, objective, teacher, rank_sum, "
-                             f"quality_within_teacher)")
+                             f"quality_within_teacher, signal_within_teacher, veto_topk, veto_within_teacher)")
         if spec.get("weights", "uniform") == "lark_soft":
             w = lark_weights([float(x) for x in q["signals"]["lark"]], k)
             if not {i for i, x in enumerate(w) if x > 0} <= set(p["idx"]):
@@ -639,12 +709,41 @@ def rank_meta(cfg: Mapping, picks: Mapping, questions: Mapping) -> dict:
     return {"signals": names, "rank_weights": weights, "mean_norm_rank": means}
 
 
+def without_teachers(questions: Mapping[str, Mapping], drop: Sequence[str], k: int) -> dict:
+    """Kho đã bỏ mọi chuỗi của các mô hình dạy trong drop (thêm 29/10, thí nghiệm kho không có mô hình dạy cùng họ).
+    Giữ nguyên thứ tự cố định của các chuỗi còn lại; câu còn dưới k chuỗi thì bị bỏ. Qual và Fam không phải tính lại:
+    Qual đã min-max trong câu, bỏ bớt chuỗi không đổi thứ tự của các chuỗi còn lại."""
+    out = {}
+    for qid, q in questions.items():
+        keep = [i for i, t in enumerate(q["teacher"]) if t not in drop]
+        if len(keep) < k:
+            continue
+        n, nq = len(q["tids"]), {}
+        for key, val in q.items():
+            if key == "signals":
+                nq[key] = {c: np.asarray(a)[keep] for c, a in val.items()}
+            elif isinstance(val, np.ndarray) and len(val) == n:
+                nq[key] = val[keep]
+            elif isinstance(val, list) and len(val) == n:
+                nq[key] = [val[i] for i in keep]
+            else:
+                nq[key] = val
+        out[qid] = nq
+    return out
+
+
 def run_one(inp: Inputs, cfg: Mapping, outdir: Path) -> dict:
     spec, sel = cfg["select"], cfg["selection"]
     k, tag = int(sel["k"]), selection_tag(cfg)
     questions = inp.questions(spec["pool"], spec["rule"])
+    excluded = list(spec.get("exclude_teachers") or [])
+    if excluded:
+        unknown = sorted(set(excluded) - {t["key"] for t in cfg["teachers"]})
+        if unknown:
+            raise SystemExit(f"Phương án {spec['name']}: exclude_teachers có mô hình dạy không tồn tại {unknown}.")
+        questions = without_teachers(questions, excluded, k)
     picks = select_all(questions, cfg)
-    check_shape(picks, set(inp.pool), k, tag)
+    check_shape(picks, set(questions) if excluded else set(inp.pool), k, tag)
     path = outdir / f"train.{tag}.jsonl"
     write_jsonl(path, train_rows(questions, picks, inp.qtext))
     summary = {"tag": tag, "name": spec["name"], "pool": spec["pool"], "rule": spec["rule"],
@@ -653,6 +752,7 @@ def run_one(inp: Inputs, cfg: Mapping, outdir: Path) -> dict:
                "div_scale": sel["div_scale"], "random_seed": inp.seed, "fit_file": inp.fit_name,
                "student": cfg["student"]["base_model_id"], "blocked": spec.get("blocked"),
                "prefer": spec.get("prefer"), "avoid": spec.get("avoid"), "control": bool(spec.get("control")),
+               "exclude_teachers": excluded or None,
                **localnat_meta(inp, spec, picks, questions),
                **rank_meta(cfg, picks, questions),
                **summarize(questions, picks, k),
@@ -680,11 +780,12 @@ def print_summary(s: Mapping) -> None:
 
 def method_list(cfg: Mapping, root: Path) -> list[tuple[str, str | None]]:
     """(method, ablation) cho --all. Mô hình học có khoá methods thì chỉ chạy đúng các phương án đó.
-    Phép đối chứng (select.control: true) không nằm trong --all; gọi riêng bằng --method."""
+    Phép đối chứng (select.control: true) và biến thể thăm dò (select.exploratory: true, thêm 27/10) không nằm
+    trong --all; gọi riêng bằng --method."""
     if "methods" in cfg:
         return [(m, None) for m in cfg["methods"]]
     methods = sorted(p.stem for p in (root / "configs" / "method").glob("*.yaml")
-                     if not load_config(method=p.stem, root=root).get("select", {}).get("control"))
+                     if not any(load_config(method=p.stem, root=root).get("select", {}).get(x) for x in ("control", "exploratory")))
     ablations = sorted(p.stem for p in (root / "configs" / "ablation").glob("*.yaml"))
     return [(m, None) for m in methods] + [("qd_rsr", a) for a in ablations]
 

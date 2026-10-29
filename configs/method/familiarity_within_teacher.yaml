@@ -1,0 +1,11 @@
+# ĐỐI CHỨNG, không phải phương án (thêm 27/10/2026). Bản đối xứng của quality_within_teacher (H3), cho Familiarity.
+# Ở mỗi câu, lấy đúng lần bốc của Correct-Only để biết mỗi mô hình dạy được bao nhiêu chỗ, rồi trong mỗi mô hình dạy
+# lấy ngần ấy chuỗi có Fam (cột grape) cao nhất. Tỷ lệ mô hình dạy giống hệt Correct-Only.
+#   ngang Correct-Only  -> lợi ích của GRAPE gần như hoàn toàn đến từ việc chọn mô hình dạy cùng họ
+#   hơn Correct-Only    -> Fam có tác dụng riêng ngoài việc chọn mô hình dạy
+select:
+  name: familiarity_within_teacher
+  pool: correct
+  rule: signal_within_teacher
+  signal: grape
+  control: true

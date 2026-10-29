@@ -1,0 +1,9 @@
+# Correct-Only trên kho KHÔNG có mô hình dạy cùng họ (thêm 29/10/2026, thí nghiệm phân tích, quy tắc đặt trước trong
+# trang Notion báo cáo tuần 10). Bỏ mọi chuỗi của qwen72b khỏi kho, câu còn dưới 3 chuỗi đúng bị bỏ; ba phương án
+# *_noqwen dùng chung tập câu hỏi này. Không nằm trong --all.
+select:
+  name: correct_only_noqwen
+  pool: correct
+  rule: random
+  exclude_teachers: [qwen72b]
+  exploratory: true

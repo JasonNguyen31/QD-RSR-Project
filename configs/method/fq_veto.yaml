@@ -1,0 +1,15 @@
+# FQ-Veto, biến thể THĂM DÒ (thêm 27/10/2026). Chất lượng làm ĐIỀU KIỆN, không làm phần thưởng:
+#   1. trong mỗi câu, loại floor(veto_drop · n) chuỗi có Qual thấp nhất, nhưng luôn còn ít nhất k chuỗi;
+#   2. lấy k chuỗi có Fam (cột grape) cao nhất trong phần còn lại, như GRAPE.
+# Lý do: Fam và Qual gần như độc lập (Spearman trong câu +0,03), nên cộng hạng như FQ-Select đổi một bậc Fam lấy một
+# bậc Qual; thực tế FQ-Select thay chuỗi Qwen ngắn bằng chuỗi deepseek, llama dài hơn khoảng 200 token. Ở đây Fam vẫn là
+# tiêu chí chính; Qual chỉ gạt đi những chuỗi kém nhất mà GRAPE đang giữ. Hoà theo thứ tự cố định ở cả hai bước.
+# Câu có n = 4 chuỗi: loại 1, nên tập chọn là 3 chuỗi Qual cao nhất. Câu có n = 3: không loại gì.
+select:
+  name: fq_veto
+  pool: correct
+  rule: veto_topk
+  signal: grape
+  veto_signal: qual
+  veto_drop: 0.3333333333
+  exploratory: true

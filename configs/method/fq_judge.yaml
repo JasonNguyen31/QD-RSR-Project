@@ -1,0 +1,12 @@
+# FQ-Judge, biến thể THĂM DÒ (thêm 27/10/2026, sau khi chạy src.tools.diagnose_fq trên FQ-Select).
+# Lý do: nửa quy tắc của Qual chủ yếu đo độ dài (Spearman trong câu với số token +0,57) và không đồng ý với nửa giám
+# khảo (-0,04). Biến thể này giữ nguyên cách gộp của FQ-Select nhưng thay Qual bằng điểm giám khảo thô, vốn không lệch
+# về độ dài (-0,12) và hơi cùng chiều với Fam (+0,18).
+# Chọn giữa các biến thể thăm dò CHỈ bằng tập validation; không nằm trong --all.
+select:
+  name: fq_judge
+  pool: correct
+  rule: rank_sum
+  signals: [grape, llm_quality]
+  rank_weights: [0.5, 0.5]
+  exploratory: true

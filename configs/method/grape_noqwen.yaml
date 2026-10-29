@@ -1,0 +1,8 @@
+# GRAPE trên kho không có qwen72b (thêm 29/10/2026). Xem correct_only_noqwen.yaml.
+select:
+  name: grape_noqwen
+  pool: correct
+  rule: topk
+  signal: grape
+  exclude_teachers: [qwen72b]
+  exploratory: true

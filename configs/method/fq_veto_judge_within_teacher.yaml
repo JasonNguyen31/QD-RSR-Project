@@ -1,0 +1,11 @@
+# FQ-Select theo hạn mức mô hình dạy (thêm 29/10/2026). Giữ đúng số chỗ của mỗi mô hình dạy trong lần bốc của
+# Correct-Only; trong mỗi mô hình dạy loại 1/3 chuỗi điểm giám khảo thấp nhất rồi lấy chuỗi Fam cao nhất.
+# So với familiarity_within_teacher (FWT): hai bên cùng thành phần mô hình dạy, cùng chọn theo Fam, chỉ khác bước loại.
+select:
+  name: fq_veto_judge_within_teacher
+  pool: correct
+  rule: veto_within_teacher
+  signal: grape
+  veto_signal: llm_quality
+  veto_drop: 0.3333333333
+  control: true
