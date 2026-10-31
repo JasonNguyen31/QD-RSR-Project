@@ -268,7 +268,7 @@ def _to_sympy_text(s: str) -> str | None:
     return t
 
 
-def sympy_equiv(a: str, b: str) -> bool:
+def _sympy_equiv_core(a: str, b: str) -> bool:
     """True nếu hai biểu thức bằng nhau về ký hiệu. Gặp biểu thức lạ thì trả False, không ném lỗi."""
     ta, tb = _to_sympy_text(a), _to_sympy_text(b)
     if ta is None or tb is None or ta == tb:
@@ -284,6 +284,38 @@ def sympy_equiv(a: str, b: str) -> bool:
         if d.is_zero:
             return True
         return abs(complex(d)) < 1e-9
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _sympy_child(q, a, b):
+    import os, resource
+    vm = int(open("/proc/self/statm").read().split()[0]) * os.sysconf("SC_PAGE_SIZE")
+    resource.setrlimit(resource.RLIMIT_AS, (vm + (2 << 30), vm + (2 << 30)))
+    try:
+        q.put(bool(_sympy_equiv_core(a, b)))
+    except BaseException:  # noqa: BLE001
+        q.put(False)
+
+
+def sympy_equiv(a: str, b: str) -> bool:
+    """Như _sympy_equiv_core nhưng chạy trong tiến trình con, hạn 10 giây, thêm 2 GB bộ nhớ.
+    Thêm 31/10/2026: đáp án dạng 10^{10^{10}} làm parse_expr tính số khổng lồ, treo hoặc ăn hết RAM."""
+    import multiprocessing as mp
+    ta, tb = _to_sympy_text(a), _to_sympy_text(b)
+    if ta is None or tb is None or ta == tb:
+        return False
+    ctx = mp.get_context("fork")
+    q = ctx.Queue(1)
+    p = ctx.Process(target=_sympy_child, args=(q, a, b), daemon=True)
+    p.start()
+    p.join(10)
+    if p.is_alive():
+        p.kill()
+        p.join()
+        return False
+    try:
+        return bool(q.get(timeout=1))
     except Exception:  # noqa: BLE001
         return False
 
