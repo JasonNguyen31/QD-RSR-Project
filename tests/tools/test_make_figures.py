@@ -15,9 +15,10 @@ def _stats(**groups):
 def test_pipeline_is_valid_svg_with_all_boxes():
     svg = mf.build_pipeline()
     ET.fromstring(svg)                                   # cú pháp XML hợp lệ
-    for word in ("Stage A:", "Stage B:", "Stage C:", "Fit(t, m)", "exact search", "5,685 samples", ">LoRA<",
-                 "next method", "next student", "filtered candidates", "cached Qual(t)"):
+    for word in ("Stage A:", "Stage B:", "Stage C:", "Fam(t, m)", "select k = 3", "5,685 samples", ">LoRA<",
+                 "next method", "next student", "correct candidates", "cached Qual(t)"):
         assert word in svg, word
+    assert "embed" not in svg and "exact search" not in svg   # bỏ nhánh embedding và ô tìm kiếm của QD-RSR (01/11)
     assert "QLoRA" not in svg        # 1,5B dùng LoRA 16-bit, chỉ 7B dùng QLoRA (chốt 02/10); xem phần Thiết lập
 
 
@@ -257,3 +258,38 @@ def test_forest_figure_explains_symbols_and_signs():
 def test_results_group_lists_every_result_figure():
     assert set(mf.RESULTS) <= set(mf.FIGURES)
     assert mf.FIGURES["teacher_share"][0] == "fig3_teacher_share"     # tên file trong main.tex
+
+
+def test_teacher_share_figure_prints_spearman_and_four_groups():
+    rows = [{"tag": t, "en": t, "vi": t, "group": g, "seeds": 3, "acc": a, "share": x}
+            for t, g, a, x in [("correct_only.k3", "free", 47.9, 28.7), ("grape.k3", "student", 54.3, 75.3),
+                               ("rsr.k3", "surprise", 45.1, 2.2), ("teacher_qwen_first.k3", "teacher", 54.9, 80.3)]]
+    svg = mf.build_teacher_share(rows, "en")
+    ET.fromstring(svg)
+    for w in ("Spearman ρ = 1.00 (n = 4)", "student surprisal", "no student signal"):
+        assert w in svg, w
+    assert "λ" not in svg
+
+
+def test_decomposition_rows_add_up_and_pool_seeds(tmp_path):
+    res = tmp_path / "eval"
+    for sd in (42, 43):
+        _eval_run(res, "correct_only.k3", sd, [2, 2, 2, 2])
+        _eval_run(res, "familiarity_within_teacher.k3", sd, [2, 2, 1, 3])
+        _eval_run(res, "grape.k3", sd, [4, 4, 2, 2])
+    groups = mf.decomposition_rows(res, n_boot=100)
+    assert [g["seeds"] for g in groups] == [[42], [43], [42, 43]]
+    for g in groups:
+        tot, fam, tch = (c["diff"] for c in g["comps"])
+        assert tot == pytest.approx(fam + tch)
+    svg = mf.build_decomposition(groups, "en")
+    ET.fromstring(svg)
+    for w in ("Pooled", "Choice of teacher: GRAPE − FWT", "+25.0"):
+        assert w in svg, w
+
+
+def test_decomposition_refuses_missing_set(tmp_path):
+    res = tmp_path / "eval"
+    _eval_run(res, "correct_only.k3", 42, [2, 2, 2, 2])
+    with pytest.raises(SystemExit, match="familiarity_within_teacher"):
+        mf.decomposition_rows(res, n_boot=50)

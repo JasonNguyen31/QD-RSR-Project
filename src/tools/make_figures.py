@@ -123,7 +123,10 @@ def save(svg_text: str, name: str, outdir: Path) -> list[Path]:
 
 # ================================================================ Hình 1: pipeline
 def build_pipeline() -> str:
-    s = Svg(2040, 1880)
+    """Pipeline ba giai đoạn của bài FQ-Select (vẽ lại 01/11): bỏ nhánh embedding và ô tìm kiếm của QD-RSR cũ.
+    Stage A làm một lần cho mọi phương án; Stage B tính Fam một lần cho mỗi mô hình học, rồi mỗi phương án chạy một
+    quy tắc chọn và huấn luyện; Stage C đánh giá và đóng gói. Hình thấp hơn bản cũ để tiết kiệm trang."""
+    s = Svg(2040, 1460)
     for mid, c in [("m-grey", GREY), ("m-blue", BLUE), ("m-pur", PUR), ("m-grn", GRN)]:
         s.marker(mid, c)
 
@@ -149,58 +152,54 @@ def build_pipeline() -> str:
             s.line(a + w / 2 + 4, y, b - w / 2 - 8, y, GREY, marker="m-grey")
 
     BH = 145
-    # Stage A
-    AY, AW, AX = 255, 300, [300, 661, 1022, 1383, 1743]
-    frame(120, 120, 1804, 330, BLUE)
-    header(163, 195, "Stage A:", "prepare data once")
+    # Stage A: sinh, lọc đáp án, chấm chất lượng một lần cho mọi phương án và mọi mô hình học
+    AY, AW, AX = 165, 300, [300, 661, 1022, 1383, 1743]
+    frame(120, 40, 1804, 310, BLUE)
+    header(163, 112, "Stage A:", "prepare data once")
     for cx, (a, b) in zip(AX, [("2,000", "questions"), ("3 teachers", "× 3 samples"), ("18,000", "trajectories"),
-                               ("answer", "filtering"), ("Qual(t)", "embed(t)")]):
+                               ("answer", "filtering"), ("Qual(t)", "judge + rules")]):
         box(cx, AY, AW, BH, BLUE_BG, BLUE, BLUE_TX, a, b)
     chain(AX, AY + BH / 2, AW)
 
-    # Stage B
-    BY, BW, BX = 900, 375, [368, 804, 1240, 1676]
-    frame(120, 720, 1804, 560, PUR)
-    header(1880, 795, "Stage B:", "per student × per method", anchor="end")
-    # "exact search": chọn lọc bằng duyệt hết mọi tập con cỡ k (tối đa 84), không dùng tham lam, vì Div không
-    # submodular. Số mẫu (cập nhật 29/09 sau khi chấm bù giám khảo, audit_stage_a 22/22): 1.899 câu còn lại
-    # sau lọc đáp án, trừ 4 câu tụt dưới 3 ứng viên khi bỏ 75 chuỗi không có điểm giám khảo, còn
-    # 1.895 câu × 3 = 5.685. Ô thứ ba của Stage A là 18.000 chuỗi SINH RA, chưa lọc; paper chỉ gọi
-    # "candidates" cho 15.010 chuỗi đúng, nên ô này ghi "trajectories" để hai chỗ không lệch nhau.
-    # Ô cuối ghi "LoRA" chứ không ghi "QLoRA" (chốt 02/10): mô hình 1,5 tỷ dùng LoRA 16-bit không lượng tử, chỉ
-    # mô hình 7 tỷ dùng QLoRA 4-bit; phần Thiết lập thực nghiệm của paper nêu rõ từng mô hình.
-    for cx, (a, b) in zip(BX, [("Fit(t, m)", "once per student"), ("exact search", "max F(S, m)"),
-                               ("5,685 samples", "k = 3 per question"), ("LoRA", "fine-tuning")]):
+    # Stage B: Fam một lần cho mỗi mô hình học; mỗi phương án là một quy tắc chọn k = 3 rồi huấn luyện LoRA.
+    # Số mẫu: 1.895 câu × 3 = 5.685, giống nhau ở mọi phương án.
+    BY, BW, BX = 650, 375, [368, 804, 1240, 1676]
+    frame(120, 525, 1804, 490, PUR)
+    header(1880, 597, "Stage B:", "per student × per method", anchor="end")
+    for cx, (a, b) in zip(BX, [("Fam(t, m)", "once per student"), ("select k = 3", "one rule per method"),
+                               ("5,685 samples", "same size for all"), ("LoRA", "fine-tuning")]):
         box(cx, BY, BW, BH, PUR_BG, PUR, PUR_TX, a, b)
     chain(BX, BY + BH / 2, BW)
 
-    # A -> B: hai nhánh, nhánh vào Fit đi cao hơn để hai đường không cắt nhau
-    ya_bot, y1, y2 = AY + BH, 545, 640
+    # A -> B: hai nhánh, nhánh vào Fam đi cao hơn để hai đường không cắt nhau
+    ya_bot, y1, y2 = AY + BH, 405, 470
     s.poly([(AX[3], ya_bot), (AX[3], y1), (BX[0], y1), (BX[0], BY - 6)], BLUE, "m-blue")
-    s.text((AX[3] + BX[0]) / 2, y1 - 16, "filtered candidates (Fit reads every chain)", 32, BLUE_TX, "middle")
+    s.text((AX[3] + BX[0]) / 2, y1 - 14, "correct candidates (the student reads every one)", 32, BLUE_TX, "middle")
     s.poly([(AX[4], ya_bot), (AX[4], y2), (BX[1], y2), (BX[1], BY - 6)], BLUE, "m-blue")
-    s.text((AX[4] + BX[1]) / 2 + 60, y2 - 16, "cached Qual(t), embed(t), reused by every method", 32, BLUE_TX, "middle")
+    s.text((AX[4] + BX[1]) / 2 + 60, y2 - 14, "cached Qual(t), reused by every method", 32, BLUE_TX, "middle")
 
-    # vòng lặp: vòng trong về greedy (đổi phương án), vòng ngoài về Fit (đổi mô hình học)
+    # vòng lặp: vòng trong về bước chọn (đổi phương án), vòng ngoài về Fam (đổi mô hình học)
     yb_bot, q = BY + BH, BX[3]
-    ya, yb = yb_bot + 70, yb_bot + 150
+    ya, yb = yb_bot + 70, yb_bot + 145
     s.poly([(q - 70, yb_bot), (q - 70, ya), (BX[1], ya), (BX[1], yb_bot + 6)], PUR, "m-pur", True, 3.4)
     s.text((q - 70 + BX[1]) / 2, ya - 14, "next method: reselect and retrain", 31, PUR_TX, "middle")
     s.poly([(q + 50, yb_bot), (q + 50, yb), (BX[0], yb), (BX[0], yb_bot + 6)], PUR, "m-pur", True, 3.4)
-    s.text((q + 50 + BX[0]) / 2, yb - 14, "next student: recompute Fit, then repeat every method", 31, PUR_TX, "middle")
+    s.text((q + 50 + BX[0]) / 2, yb - 14, "next student: recompute Fam, then repeat every method", 31, PUR_TX,
+           "middle")
 
     # Stage C
-    CY, CW, CX = 1590, 375, [820, 1256]
-    frame(120, 1450, 1804, 340, GRN)
-    header(163, 1525, "Stage C:", "evaluate and deploy")
-    for cx, (a, b) in zip(CX, [("6 benchmarks", "Acc@4, Pass@4"), ("GGUF", "Ollama")]):
+    CY, CW, CX = 1235, 375, [820, 1256]
+    frame(120, 1110, 1804, 310, GRN)
+    header(163, 1182, "Stage C:", "evaluate and deploy")
+    for cx, (a, b) in zip(CX, [("6 benchmarks", "Acc@4, Pass@4"), ("GGUF", "Ollama, LM Studio")]):
         box(cx, CY, CW, BH, GRN_BG, GRN, GRN_TX, a, b)
     chain(CX, CY + BH / 2, CW)
 
     # B -> C
-    yg = 1365
+    yg = 1065
     s.poly([(q + 150, yb_bot), (q + 150, yg), (CX[0], yg), (CX[0], CY - 6)], GRN, "m-grn")
-    s.text((q + 150 + CX[0]) / 2, yg - 16, "fine-tuned LoRA adapter, one per student × method × seed", 32, GRN_TX, "middle")
+    s.text((q + 150 + CX[0]) / 2, yg - 14, "fine-tuned LoRA adapter, one per student × method × seed", 32, GRN_TX,
+           "middle")
     return s.render()
 
 
@@ -507,36 +506,40 @@ def build_correlation(cfg, workdir: str, fit_file: str) -> str:
 # Hai hình dùng chung một bảng số: Acc@4 trên MATH-500 của từng tập huấn luyện (trung bình qua các seed),
 # chênh lệch ghép cặp so với Correct-Only kèm khoảng tin cậy 95% (cùng cách tính với eval_table --versus),
 # và tỷ lệ chuỗi Qwen2.5-72B trong tập (đọc từ select.<tên>.json do b2_select ghi). Chạy trên máy có kết quả đánh giá.
-C_STUDENT, C_TEACHER, C_FREE = "#2a78d6", "#eb6834", "#52514e"
+C_STUDENT, C_SURPRISE, C_TEACHER, C_FREE = "#2a78d6", "#c2413a", "#eb6834", "#52514e"
 GRID_C, LEAD_C = "#e8e7e3", "#a9a8a2"
-# tên tập chọn -> (nhãn tiếng Anh, nhãn tiếng Việt, nhóm). Nhóm quyết định màu. Tập không có trong bảng thì không vẽ.
+# tên tập chọn -> (nhãn tiếng Anh, nhãn tiếng Việt, nhóm). Nhóm quyết định màu: chọn theo mức quen thuộc của mô hình
+# học (student), theo độ bất ngờ (surprise), chỉ theo mô hình dạy (teacher), hay không dùng tín hiệu của mô hình học
+# (free). Tập không có trong bảng thì không vẽ. Kho không có Qwen không đưa vào vì tỷ lệ Qwen luôn bằng 0 và khác kho.
 RESULT_SETS = {
     "no_filter.k3": ("No-Filter", "No-Filter", "free"),
     "correct_only.k3": ("Correct-Only", "Correct-Only", "free"),
     "token_length.k3": ("Token-Length", "Token-Length", "free"),
+    "quality_only.k3": ("Quality-only", "Quality-only", "free"),
+    "quality_within_teacher.k3": ("Quality within teacher", "Chất lượng trong từng mô hình dạy", "free"),
     "grape.k3": ("GRAPE", "GRAPE", "student"),
     "local_naturalness.k3": ("Local Naturalness", "Local Naturalness", "student"),
-    "rsr.k3": ("RSR", "RSR", "student"),
-    "lark.k3": ("LARK", "LARK", "student"),
-    "fit_quality.k3": ("QD-RSR (λ = 0)", "QD-RSR (λ = 0)", "student"),
-    "qd_rsr.k3.lam0.4": ("λ = 0.4 (not selected)", "λ = 0,4 (không được chọn)", "student"),
+    "familiarity_within_teacher.k3": ("Familiarity within teacher", "Quen nhất trong từng mô hình dạy", "student"),
+    "fq_select.k3": ("FQ-Select v1", "FQ-Select v1", "student"),
+    "fq_veto_judge.k3": ("FQ-Select v2", "FQ-Select v2", "student"),
+    "rsr.k3": ("RSR", "RSR", "surprise"),
+    "lark.k3": ("LARK", "LARK", "surprise"),
+    "fit_quality.k3": ("QD-RSR", "QD-RSR", "surprise"),
     "teacher_qwen_first.k3": ("Prefer Qwen-72B", "Ưu tiên Qwen-72B", "teacher"),
     "teacher_qwen_last.k3": ("Avoid Qwen-72B", "Tránh Qwen-72B", "teacher"),
-    "fq_select.k3": ("FQ-Select", "FQ-Select", "student"),
-    "quality_only.k3": ("Quality-only", "Quality-only", "free"),
-    "quality_within_teacher.k3": ("Quality within teacher", "Chất lượng trong từng mô hình dạy", "teacher"),
 }
-# Tập in đậm là phương án đề xuất: FQ-Select từ 20/10 (trước đó là fit_quality.k3 của hướng QD-RSR cũ).
-OURS, BASE = "fq_select.k3", "correct_only.k3"
-GROUP_COLOR = {"student": C_STUDENT, "teacher": C_TEACHER, "free": C_FREE}
+# Tập in đậm là phương án đề xuất: hai bản FQ-Select (trước 20/10 là fit_quality.k3 của hướng QD-RSR cũ).
+OURS, BASE = ("fq_select.k3", "fq_veto_judge.k3"), "correct_only.k3"
+GROUP_ORDER = ["student", "surprise", "teacher", "free"]
+GROUP_COLOR = {"student": C_STUDENT, "surprise": C_SURPRISE, "teacher": C_TEACHER, "free": C_FREE}
 RESULT_TEXT = {
     "en": {"x": "Share of Qwen2.5-72B trajectories in the training set (%)", "y": "MATH-500 Acc@4 (%)",
-           "groups": ["selected by a student signal", "teacher-identity control", "no student signal"],
-           "seeds": ["mean of 2+ seeds", "1 seed"], "base": "Correct-Only", "dec": "."},
+           "groups": ["student familiarity", "student surprisal", "teacher-identity control", "no student signal"],
+           "seeds": ["mean of 2+ seeds", "1 seed"], "base": "Correct-Only", "dec": ".", "rho": "Spearman"},
     "vi": {"x": "Tỷ lệ chuỗi của Qwen2.5-72B trong tập huấn luyện (%)", "y": "Acc@4 trên MATH-500 (%)",
-           "groups": ["chọn theo tín hiệu của mô hình học", "đối chứng theo mô hình dạy",
+           "groups": ["mức quen thuộc của mô hình học", "độ bất ngờ với mô hình học", "đối chứng theo mô hình dạy",
                       "không dùng tín hiệu của mô hình học"],
-           "seeds": ["trung bình từ 2 seed", "1 seed"], "base": "mức Correct-Only", "dec": ","},
+           "seeds": ["trung bình từ 2 seed", "1 seed"], "base": "mức Correct-Only", "dec": ",", "rho": "Spearman"},
 }
 
 
@@ -619,19 +622,21 @@ def swatch(s: Svg, x: float, y: float, color: str) -> None:
 
 
 def build_teacher_share(rows: Sequence[Mapping], lang: str = "en") -> str:
-    """Acc@4 trên MATH-500 theo tỷ lệ chuỗi Qwen2.5-72B của tập huấn luyện. Chỉ dùng chấm tròn: màu là cách chọn,
-    chấm đặc là trung bình từ 2 seed, chấm rỗng là 1 seed. Cụm bên trái (tỷ lệ dưới 15%) xếp nhãn thành một cột
-    có đường dẫn; các điểm khác thử lần lượt vài vị trí quanh điểm cho tới khi không đè lên gì."""
+    """Acc@4 trên MATH-500 theo tỷ lệ chuỗi Qwen2.5-72B của tập huấn luyện. Chỉ dùng chấm tròn: màu là loại tín hiệu
+    dùng để chọn, chấm đặc là trung bình từ 2 seed, chấm rỗng là 1 seed. Nhãn của hai cụm đông (tỷ lệ dưới 15% và từ
+    15% tới dưới 45%) xếp thành cột có đường dẫn, theo thứ tự Acc@4; các điểm còn lại thử lần lượt vài vị trí quanh
+    điểm cho tới khi không đè lên gì. Góc trên trái ghi tương quan hạng Spearman trên các tập có từ 2 seed."""
     t = RESULT_TEXT[lang]
     pts = [r for r in rows if r.get("acc") is not None]
     if not pts:
         raise SystemExit("Không có tập nào có kết quả để vẽ.")
-    W, H = 1500, 940
-    L, R, T, B = 140, 40, 30, 130
+    W, H = 1500, 880
+    L, R, T, B = 130, 30, 24, 120
     pw, ph = W - L - R, H - T - B
     x0, x1 = -3.0, 90.0
     y0 = float(int(min(r["acc"] for r in pts)) - 1)
-    y1 = float(int(max(r["acc"] for r in pts)) + 3)
+    y1 = float(int(max(r["acc"] for r in pts)) + 2)
+    FS, LS = 30, 27                                      # cỡ chữ nhãn điểm và chú giải
 
     def X(v: float) -> float:
         return L + (v - x0) / (x1 - x0) * pw
@@ -642,36 +647,44 @@ def build_teacher_share(rows: Sequence[Mapping], lang: str = "en") -> str:
     s = Svg(W, H)
     for v in range(0, 100, 20):
         s.line(X(v), T, X(v), T + ph, GRID_C, 2)
-        s.text(X(v), T + ph + 42, str(v), 28, DIM, "middle")
+        s.text(X(v), T + ph + 44, str(v), 30, DIM, "middle")
     step = 2 if (y1 - y0) <= 24 else 5
     v = y0 + (-y0) % step
     while v <= y1:
         s.line(L, Y(v), L + pw, Y(v), GRID_C, 2)
-        s.text(L - 16, Y(v) + 10, num(v, t["dec"]), 28, DIM, "end")
+        s.text(L - 16, Y(v) + 10, num(v, t["dec"]), 30, DIM, "end")
         v += step
     s.line(L, T + ph, L + pw, T + ph, GREY, 3)
     s.line(L, T, L, T + ph, GREY, 3)
-    s.text(L + pw / 2, H - 30, t["x"], 30, INK, "middle")
-    s.add(f'<text x="40" y="{T + ph / 2}" transform="rotate(-90 40 {T + ph / 2})" text-anchor="middle" '
-          f'font-family="{FONT}" font-size="30" fill="{INK}">{t["y"]}</text>')
+    s.text(L + pw / 2, H - 22, t["x"], 32, INK, "middle")
+    s.add(f'<text x="36" y="{T + ph / 2}" transform="rotate(-90 36 {T + ph / 2})" text-anchor="middle" '
+          f'font-family="{FONT}" font-size="32" fill="{INK}">{t["y"]}</text>')
+    boxes = [(X(r["share"]) - 16, Y(r["acc"]) - 16, 32, 32) for r in pts]
     base = next((r for r in pts if r["tag"] == BASE), None)
     if base:
         s.line(L, Y(base["acc"]), L + pw, Y(base["acc"]), LEAD_C, 2.5, dashed=True)
-        s.text(L + pw - 8, Y(base["acc"]) - 12, t["base"], 24, DIM, "end")
+        s.text(L + pw - 8, Y(base["acc"]) - 12, t["base"], LS, DIM, "end")
+        boxes += [(L + pw - 8 - text_width(t["base"], LS), Y(base["acc"]) - 38, text_width(t["base"], LS), 30)]
+    multi = [r for r in pts if r["seeds"] >= 2]
+    if len(multi) > 2:
+        rho = spearman_rho([r["share"] for r in multi], [r["acc"] for r in multi])
+        lab = f'{t["rho"]} ρ = {num(rho, t["dec"], 2)} (n = {len(multi)})'
+        s.text(L + 14, T + 34, lab, LS, DIM)
+        boxes.append((L + 14, T + 6, text_width(lab, LS), 36))
 
-    # chú giải ở góc dưới phải: hai dòng số seed, rồi ba dòng màu
-    lw = max(text_width(x, 24) for x in t["groups"] + t["seeds"]) + 70
-    lx, ly, dy = L + pw - lw, T + ph - 5 * 38 - 18, 38
-    boxes = [(X(r["share"]) - 16, Y(r["acc"]) - 16, 32, 32) for r in pts] + [(lx - 10, ly - 10, lw + 10, 5 * dy + 20)]
-    if base:                                             # nhãn không được đè lên đường gạch Correct-Only
-        boxes += [(L, Y(base["acc"]) - 3, pw, 6), (L + pw - 8 - text_width(t["base"], 24), Y(base["acc"]) - 34,
-                                                   text_width(t["base"], 24), 28)]
+    # chú giải ở góc dưới phải: bốn dòng màu, rồi hai dòng số seed
+    groups = [g for g in GROUP_ORDER if any(r["group"] == g for r in pts)]
+    labels = [t["groups"][GROUP_ORDER.index(g)] for g in groups]
+    dy, n_leg = 40, len(groups) + 2
+    lw = max(text_width(x, LS) for x in labels + t["seeds"]) + 60
+    lx, ly = L + pw - lw, T + ph - n_leg * dy - 10
+    boxes.append((lx - 10, ly - 10, lw + 10, n_leg * dy + 20))
+    for i, (g, lab) in enumerate(zip(groups, labels)):
+        swatch(s, lx, ly + 26 + i * dy, GROUP_COLOR[g])
+        s.text(lx + 50, ly + 26 + i * dy, lab, LS, DIM)
     for i, (filled, lab) in enumerate(zip([True, False], t["seeds"])):
-        dot(s, lx + 18, ly + 18 + i * dy, C_FREE, filled, 10)
-        s.text(lx + 50, ly + 27 + i * dy, lab, 24, DIM)
-    for i, (g, lab) in enumerate(zip(["student", "teacher", "free"], t["groups"])):
-        swatch(s, lx, ly + 2 * dy + 28 + i * dy, GROUP_COLOR[g])
-        s.text(lx + 50, ly + 2 * dy + 27 + i * dy, lab, 24, DIM)
+        dot(s, lx + 18, ly + 17 + (len(groups) + i) * dy, C_FREE, filled, 10)
+        s.text(lx + 50, ly + 26 + (len(groups) + i) * dy, lab, LS, DIM)
 
     def fits(bx: tuple) -> bool:
         x, y, w, h = bx
@@ -679,38 +692,48 @@ def build_teacher_share(rows: Sequence[Mapping], lang: str = "en") -> str:
                 not any(x < ox + ow and ox < x + w and y < oy + oh and oy < y + h for ox, oy, ow, oh in boxes))
 
     placed = []
-    left = sorted([r for r in pts if r["share"] < 15], key=lambda r: -r["acc"])
-    col_x, gap, ys = X(12), 40, []
-    for r in left:                                       # cột nhãn theo thứ tự Acc@4, cách nhau ít nhất `gap`
-        y = Y(r["acc"]) + 9
-        ys.append(max(y, ys[-1] + gap) if ys else y)
-    if ys and ys[-1] > T + ph - 8:                       # tràn xuống trục thì đẩy cả cột lên
-        ys = [y - (ys[-1] - (T + ph - 8)) for y in ys]
-    for r, y in zip(left, ys):
-        w = text_width(r[lang], 26, r["tag"] == OURS)
-        placed.append((r, col_x, y, "start"))
-        boxes.append((col_x, y - 24, w, 32))
-    for r in sorted([r for r in pts if r["share"] >= 15], key=lambda r: -r["acc"]):
+    gap = 40
+    for lo_s, hi_s, col_x in ((-1.0, 15.0, X(10.5)), (15.0, 45.0, X(40.0))):
+        col = sorted([r for r in pts if lo_s <= r["share"] < hi_s], key=lambda r: -r["acc"])
+        want = [Y(r["acc"]) + 9 for r in col]
+        ys: list[float] = []
+        for y in want:                                   # cách nhau ít nhất `gap`, rồi dời cả cột về giữa cụm
+            ys.append(max(y, ys[-1] + gap) if ys else y)
+        if ys:
+            shift = (sum(ys) - sum(want)) / len(ys)
+            ys = [y - shift for y in ys]
+            if ys[0] < T + 30:
+                ys = [y + (T + 30 - ys[0]) for y in ys]
+            if ys[-1] > T + ph - 8:
+                ys = [y - (ys[-1] - (T + ph - 8)) for y in ys]
+        for r, y in zip(col, ys):
+            w = text_width(r[lang], FS, r["tag"] in OURS)
+            placed.append((r, col_x, y, "start"))
+            boxes.append((col_x, y - 26, w, 34))
+    for r in sorted([r for r in pts if r["share"] >= 45], key=lambda r: -r["acc"]):
         px, py = X(r["share"]), Y(r["acc"])
-        w = text_width(r[lang], 26, r["tag"] == OURS)
-        cands = [(px + 24, py + 9, "start"), (px - 24, py + 9, "end"), (px + 16, py - 24, "start"),
-                 (px - 16, py - 24, "end"), (px + 16, py + 44, "start"), (px - 16, py + 44, "end"),
+        w = text_width(r[lang], FS, r["tag"] in OURS)
+        cands = [(px - 24, py + 10, "end"), (px + 24, py + 10, "start"), (px - 16, py - 26, "end"),
+                 (px + 16, py - 26, "start"), (px - 16, py + 46, "end"), (px + 16, py + 46, "start"),
                  (px - 60, py - 60, "end"), (px + 60, py - 60, "start"), (px - 60, py + 80, "end"),
                  (px + 60, py + 80, "start")]
         for cx, cy, anc in cands:
-            bx = (cx if anc == "start" else cx - w, cy - 24, w, 32)
+            bx = (cx if anc == "start" else cx - w, cy - 26, w, 34)
             if fits(bx):
                 break
         placed.append((r, cx, cy, anc))
         boxes.append(bx)
     for r, cx, cy, anc in placed:                        # đường dẫn vẽ trước để nằm dưới chấm và chữ
         px, py = X(r["share"]), Y(r["acc"])
-        if abs(cx - px) > 26 or abs(cy - 9 - py) > 12:
-            s.line(px, py, cx + (-6 if anc == "start" else 6), cy - 9, LEAD_C, 2)
+        if abs(cx - px) > 26 or abs(cy - 10 - py) > 12:
+            s.line(px, py, cx + (-6 if anc == "start" else 6), cy - 10, LEAD_C, 2)
     for r in pts:
         dot(s, X(r["share"]), Y(r["acc"]), GROUP_COLOR[r["group"]], r["seeds"] >= 2)
-    for r, cx, cy, anc in placed:
-        s.text(cx, cy, r[lang], 26, INK, anc, "700" if r["tag"] == OURS else "400")
+    for r, cx, cy, anc in placed:                        # nền trắng sau chữ để đường gạch Correct-Only không cắt nhãn
+        w = text_width(r[lang], FS, r["tag"] in OURS)
+        s.add(f'<rect x="{(cx if anc == "start" else cx - w) - 3:.1f}" y="{cy - 25:.1f}" width="{w + 6:.1f}" '
+              f'height="32" fill="#ffffff"/>')
+        s.text(cx, cy, r[lang], FS, INK, anc, "700" if r["tag"] in OURS else "400")
     return s.render()
 
 
@@ -744,7 +767,7 @@ def build_forest(rows: Sequence[Mapping]) -> str:
     for i, r in enumerate(rs):
         y = T + row_h * (i + 0.5)
         c = GROUP_COLOR[r["group"]]
-        s.text(L - 28, y + 10, r["vi"], 28, INK, "end", "700" if r["tag"] == OURS else "400")
+        s.text(L - 28, y + 10, r["vi"], 28, INK, "end", "700" if r["tag"] in OURS else "400")
         s.add(f'<line x1="{X(r["lo"]):.1f}" y1="{y:.1f}" x2="{X(r["hi"]):.1f}" y2="{y:.1f}" stroke="{c}" '
               f'stroke-width="7" stroke-linecap="round"/>')
         dot(s, X(r["diff"]), y, c, r["seeds"] >= 2, 12)
@@ -799,6 +822,122 @@ def load_results(cfg, a) -> list[dict]:
     return _RESULT_CACHE[key]
 
 
+# ================================================================ Hình 4: tách lợi ích của GRAPE (thêm 01/11)
+# GRAPE − Correct-Only = (FWT − Correct-Only) + (GRAPE − FWT). FWT (familiarity_within_teacher) chọn lời giải quen
+# nhất nhưng giữ đúng số lời giải mỗi mô hình dạy như lần bốc của Correct-Only, nên vế giữa đo riêng tín hiệu quen
+# thuộc trong cùng một mô hình dạy, vế cuối đo phần do được đổi mô hình dạy. Mỗi vế ghép cặp theo câu hỏi.
+DECOMP = [("total", "grape.k3", "correct_only.k3", C_FREE),
+          ("fam", "familiarity_within_teacher.k3", "correct_only.k3", C_STUDENT),
+          ("teacher", "grape.k3", "familiarity_within_teacher.k3", C_TEACHER)]
+DECOMP_TEXT = {
+    "en": {"total": "Total gain: GRAPE − Correct-Only",
+           "fam": "Familiar solution within each teacher: FWT − Correct-Only",
+           "teacher": "Choice of teacher: GRAPE − FWT", "seed": "Seed", "pooled": "Pooled",
+           "y": "Δ MATH-500 Acc@4 (points)", "dec": "."},
+    "vi": {"total": "Tổng lợi ích: GRAPE − Correct-Only",
+           "fam": "Chọn lời giải quen trong từng mô hình dạy: FWT − Correct-Only",
+           "teacher": "Chọn mô hình dạy: GRAPE − FWT", "seed": "Seed", "pooled": "Gộp",
+           "y": "Chênh lệch Acc@4 MATH-500 (điểm)", "dec": ","},
+}
+
+
+def decomposition_rows(results: Path, seeds: Sequence[int] | None = None, bench: str = "math500",
+                       n_boot: int = 2000) -> list[dict]:
+    """Một nhóm cho mỗi seed mà ba tập cùng có, thêm một nhóm gộp các seed đó. Mỗi nhóm có ba vế (điểm %) kèm khoảng
+    tin cậy 95% ghép cặp; gộp là trung bình từng câu qua các seed rồi mới ghép cặp, giống eval_table."""
+    from src.tools.eval_table import find_runs, paired_bootstrap, pooled_question_acc
+
+    runs = find_runs(results)
+    tags = {t for _, a, b, _ in DECOMP for t in (a, b)}
+    missing = [t for t in sorted(tags) if t not in runs]
+    if missing:
+        raise SystemExit(f"Thiếu kết quả của {', '.join(missing)} trong {results}.")
+    common = sorted(set.intersection(*({sd for sd, x in runs[t].items() if bench in x.get("benchmarks", {})}
+                                       for t in tags)))
+    if seeds is not None:
+        common = [sd for sd in common if sd in seeds]
+    if not common:
+        raise SystemExit("Ba tập không có seed chung nào để tách lợi ích.")
+    n_samples = int(next(iter(runs["grape.k3"].values())).get("settings", {}).get("n_samples", 4))
+    groups = [[sd] for sd in common] + ([common] if len(common) > 1 else [])
+    out = []
+    for g in groups:
+        comps = []
+        for key, a, b, _ in DECOMP:
+            r = paired_bootstrap(pooled_question_acc(runs[a], g, bench, n_samples),
+                                 pooled_question_acc(runs[b], g, bench, n_samples), n_boot)
+            if r is None:
+                raise SystemExit(f"Không so ghép cặp được {a} với {b} ở seed {g}.")
+            comps.append({"key": key, "diff": 100 * r["diff"], "lo": 100 * r["lo"], "hi": 100 * r["hi"]})
+        out.append({"seeds": g, "comps": comps})
+    return out
+
+
+def build_decomposition(groups: Sequence[Mapping], lang: str = "en") -> str:
+    """Cột nhóm theo seed, mỗi nhóm ba cột: tổng lợi ích, phần do chọn lời giải quen trong từng mô hình dạy, phần
+    do chọn mô hình dạy. Râu là khoảng tin cậy 95% ghép cặp; dấu * khi khoảng không chứa 0."""
+    t = DECOMP_TEXT[lang]
+    if not groups:
+        raise SystemExit("Không có nhóm nào để vẽ.")
+    W, H = 1500, 760
+    L, R, T, B = 130, 30, 150, 80
+    pw, ph = W - L - R, H - T - B
+    lo = min(c["lo"] for g in groups for c in g["comps"])
+    hi = max(c["hi"] for g in groups for c in g["comps"])
+    y0, y1 = float(int(min(lo, 0.0)) - 2), float(int(hi) + 2)
+
+    def Y(v: float) -> float:
+        return T + ph - (v - y0) / (y1 - y0) * ph
+
+    s = Svg(W, H)
+    v = y0 + (-y0) % 2
+    while v <= y1:
+        s.line(L, Y(v), L + pw, Y(v), GRID_C, 2)
+        s.text(L - 16, Y(v) + 10, num(v, t["dec"]), 30, DIM, "end")
+        v += 2
+    s.line(L, Y(0), L + pw, Y(0), GREY, 3)
+    s.line(L, T, L, T + ph, GREY, 3)
+    s.add(f'<text x="36" y="{T + ph / 2}" transform="rotate(-90 36 {T + ph / 2})" text-anchor="middle" '
+          f'font-family="{FONT}" font-size="30" fill="{INK}">{t["y"]}</text>')
+    for i, (key, _, _, c) in enumerate(DECOMP):          # chú giải ở trên, mỗi vế một dòng
+        swatch(s, L + 10, 34 + i * 40, c)
+        s.text(L + 60, 34 + i * 40, t[key], 28, INK)
+    gw = pw / len(groups)
+    bw = min(110.0, gw / 4.2)
+    for gi, g in enumerate(groups):
+        cx = L + gw * (gi + 0.5)
+        lab = f'{t["seed"]} {g["seeds"][0]}' if len(g["seeds"]) == 1 else t["pooled"]
+        s.text(cx, T + ph + 50, lab, 30, INK, "middle", "700" if len(g["seeds"]) > 1 else "400")
+        for ci, (comp, (_, _, _, c)) in enumerate(zip(g["comps"], DECOMP)):
+            x = cx + (ci - 1) * (bw + 14) - bw / 2
+            top, bot = (Y(comp["diff"]), Y(0)) if comp["diff"] >= 0 else (Y(0), Y(comp["diff"]))
+            s.add(f'<rect x="{x:.1f}" y="{top:.1f}" width="{bw:.1f}" height="{max(bot - top, 1):.1f}" fill="{c}" '
+                  f'fill-opacity="{0.55 if len(g["seeds"]) > 1 else 0.9}" stroke="{c}" stroke-width="2"/>')
+            xm = x + bw / 2
+            s.line(xm, Y(comp["lo"]), xm, Y(comp["hi"]), INK, 2.4)
+            for yy in (comp["lo"], comp["hi"]):
+                s.line(xm - 12, Y(yy), xm + 12, Y(yy), INK, 2.4)
+            star = "*" if comp["lo"] > 0 or comp["hi"] < 0 else ""
+            txt = num(comp["diff"], t["dec"], 1, sign=True) + star
+            ty = Y(comp["hi"]) - 12 if comp["diff"] >= 0 else Y(comp["lo"]) + 34
+            s.text(xm, ty, txt, 26, INK, "middle")
+    return s.render()
+
+
+def load_decomposition(cfg, a) -> list[dict]:
+    from src.common.config import path_of
+
+    if "student" not in cfg:
+        cfg = load_config(student=a.student)
+    tag = f"{cfg['student']['key']}_base"
+    results = resolve_path(cfg, a.results) if a.results else path_of(cfg, "out_results") / "eval" / tag
+    groups = decomposition_rows(results, a.seeds)
+    for g in groups:
+        print("  seed " + ",".join(map(str, g["seeds"])) + "  " + "  ".join(
+            f'{c["key"]} {c["diff"]:+.1f} [{c["lo"]:+.1f}; {c["hi"]:+.1f}]' for c in g["comps"]))
+    return groups
+
+
 # ================================================================ Hình 3: ví dụ chọn lọc
 def build_selection(*_args, **_kw) -> str:
     raise SystemExit(
@@ -824,9 +963,13 @@ FIGURES = {
     "teacher_share": ("fig3_teacher_share", lambda a, cfg: build_teacher_share(load_results(cfg, a), "en")),
     "teacher_share_vi": ("figC2_teacher_share_vi", lambda a, cfg: build_teacher_share(load_results(cfg, a), "vi")),
     "forest": ("figC1_forest_vi", lambda a, cfg: build_forest(load_results(cfg, a))),
+    # Hình 4 của bài (thêm 01/11): tách lợi ích của GRAPE thành phần chọn lời giải quen và phần chọn mô hình dạy
+    "decomposition": ("fig4_decomposition", lambda a, cfg: build_decomposition(load_decomposition(cfg, a), "en")),
+    "decomposition_vi": ("figC3_decomposition_vi",
+                         lambda a, cfg: build_decomposition(load_decomposition(cfg, a), "vi")),
 }
 REPORT = ["teachers", "truncation", "lengths", "judge", "distance", "correlation"]
-RESULTS = ["teacher_share", "teacher_share_vi", "forest"]
+RESULTS = ["teacher_share", "teacher_share_vi", "forest", "decomposition", "decomposition_vi"]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
