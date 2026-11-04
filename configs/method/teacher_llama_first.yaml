@@ -1,0 +1,11 @@
+# ĐỐI CHỨNG (Hướng 1, thêm 04/11/2026). Ưu tiên chuỗi của Llama-3.3-70B; câu nào không đủ k chuỗi đúng của
+# nó thì lấy tiếp ngẫu nhiên từ hai mô hình dạy kia. Không dùng tín hiệu nào của mô hình học.
+# Cặp với teacher_qwen_first: nếu mô hình học Llama hưởng lợi từ mô hình dạy cùng họ thì Prefer-Llama sẽ hơn
+# Prefer-Qwen; nếu "văn phong Qwen" tốt cho mọi mô hình học thì ngược lại. Quy tắc kết luận ghi trước ở Notion.
+# Không nằm trong b2_select --all.
+select:
+  name: teacher_llama_first
+  pool: correct
+  rule: teacher
+  prefer: [llama70b]
+  control: true

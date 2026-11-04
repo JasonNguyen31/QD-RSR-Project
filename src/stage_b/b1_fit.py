@@ -44,7 +44,7 @@ from typing import Mapping, Sequence
 
 from src.common.config import load_config, resolve_path
 from src.common.io_utils import JsonlWriter, load_done_keys, now_iso, read_jsonl
-from src.common.prompts import SYSTEM_PROMPT_TRAIN
+from src.common.prompts import SYSTEM_PROMPT_TRAIN, render_prompt, set_prompt_format
 from src.stage_b.signals import SIGNALS_VERSION, local_items, mean_over_steps, token_steps
 
 try:
@@ -124,9 +124,7 @@ def build_inputs(tok, question: str, trajectory: str, max_len: int) -> tuple:
     """
     import torch
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT_TRAIN},
-                {"role": "user", "content": question}]
-    prompt = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    prompt = render_prompt(tok, question)
     p_ids = tok(prompt, add_special_tokens=False)["input_ids"]
     enc = tok(trajectory, add_special_tokens=False, return_offsets_mapping=True)
     r_ids, offsets = enc["input_ids"], enc["offset_mapping"]
@@ -384,6 +382,7 @@ def main(argv: Sequence[str] | None = None) -> int:
           + (f"LocalNat {local_k} câu liền trước" if with_local else "BỎ LocalNat")
           + f", độ dài tối đa {max_len}")
     model, tok = load_student(model_id, args.load_4bit)
+    set_prompt_format(tok, st.get("prompt_format", "chat_template"))
     print(f"[b1] nạp xong, chiếm {torch.cuda.max_memory_allocated() / 1024 ** 3:.2f} GB")
 
     if args.selftest:

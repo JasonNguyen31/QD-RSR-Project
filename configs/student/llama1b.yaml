@@ -1,0 +1,19 @@
+# Mô hình học thứ hai, khác họ với ba mô hình dạy chính của Qwen (Hướng 1, thêm 04/11/2026).
+# Mục đích: tách "cùng họ với Qwen2.5-72B" khỏi "văn phong riêng của Qwen2.5-72B". Kho chuỗi, chất lượng và
+# embedding dùng lại nguyên; chỉ b1_fit (Fam) và b3_train/c1_evaluate chạy lại với mô hình này.
+# Model gated: phải chấp nhận giấy phép Llama 3.2 trên Hugging Face và đăng nhập (hf auth login) trước.
+student:
+  key: llama1b
+  model_id: meta-llama/Llama-3.2-1B-Instruct
+  base_model_id: meta-llama/Llama-3.2-1B  # dùng khi chạy với cờ --base
+  params_b: 1.24
+  # Token đầu đề của khuôn hội thoại Llama-3 (<|start_header_id|> ...) ở bản nền gần như chưa được học, cùng loại
+  # lỗi <|im_end|> của Qwen đã gặp 03/10. Dùng văn bản thuần (BOS, system, "Question:", "Answer:") để mọi token
+  # trong prompt đều đã được học. Xem src/common/prompts.py.
+  prompt_format: plain
+
+training:
+  method: lora
+  load_in_4bit: false          # cùng đường với qwen1_5b: LoRA trên bfloat16, chấm Fam cũng ở 16-bit
+  batch_size: 2                # CHƯA ĐO. Chạy check_vram --model meta-llama/Llama-3.2-1B --no-quant --loss chunked
+  grad_accum: 8                # lô hiệu dụng 16, bằng qwen1_5b

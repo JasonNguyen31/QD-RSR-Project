@@ -79,7 +79,7 @@ from typing import Mapping, Sequence
 
 from src.common.config import load_config, path_of, resolve_path
 from src.common.io_utils import JsonlWriter, ensure_dir, now_iso, read_json, read_jsonl, write_json
-from src.common.prompts import SYSTEM_PROMPT_TRAIN
+from src.common.prompts import SYSTEM_PROMPT_TRAIN, render_prompt, set_prompt_format
 from src.stage_b.b2_select import selection_tag, student_tag
 
 IGNORE = -100                    # nhãn bị bỏ qua khi tính mất mát (đề bài và phần đệm)
@@ -153,7 +153,7 @@ def encode_sample(tok, question: str, text: str, max_len: int, eot_ids: Sequence
     Phần đề và phần chuỗi được mã hoá đúng như b1_fit.build_inputs, để mô hình học gặp lúc tinh chỉnh đúng
     cái nó đã được chấm tín hiệu.
     """
-    prompt = tok.apply_chat_template(prompt_messages(question), tokenize=False, add_generation_prompt=True)
+    prompt = render_prompt(tok, question)
     p_ids = list(tok(prompt, add_special_tokens=False)["input_ids"])
     r_ids = list(tok(text, add_special_tokens=False)["input_ids"])
     room = max_len - len(p_ids)
@@ -300,6 +300,7 @@ def load_model(cfg: Mapping, seed: int):
 
     t, model_id = cfg["training"], cfg["student"]["base_model_id"]
     tok = AutoTokenizer.from_pretrained(model_id)
+    set_prompt_format(tok, cfg["student"].get("prompt_format", "chat_template"))
     if tok.pad_token_id is None:
         tok.pad_token = tok.eos_token
     kw = dict(device_map="cuda", attn_implementation="sdpa", dtype=torch.bfloat16)
@@ -421,7 +422,7 @@ def generate_for_stop_check(model, tok, questions: Sequence[str], cfg: Mapping, 
     new_rows: list[list[int]] = []
     try:
         for i in range(0, len(questions), batch):
-            prompts = [tok.apply_chat_template(prompt_messages(q), tokenize=False, add_generation_prompt=True)
+            prompts = [render_prompt(tok, q)
                        for q in questions[i:i + batch]]
             enc = tok(prompts, return_tensors="pt", padding=True, add_special_tokens=False).to(model.device)
             with torch.no_grad():

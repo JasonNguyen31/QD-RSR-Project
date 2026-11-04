@@ -1,0 +1,9 @@
+# ĐỐI CHỨNG (Hướng 1, thêm 04/11/2026). Như teacher_llama_first nhưng ưu tiên DeepSeek; dùng làm mốc "mô hình dạy
+# thứ ba" để biết chênh lệch Prefer-Llama và Prefer-Qwen có đặc thù cho hai mô hình đó hay không.
+# Không nằm trong b2_select --all.
+select:
+  name: teacher_deepseek_first
+  pool: correct
+  rule: teacher
+  prefer: [deepseek]
+  control: true

@@ -51,6 +51,7 @@ from typing import Mapping, Sequence
 from src.common.answers import grade, is_equiv, last_boxed
 from src.common.config import load_config, path_of, resolve_path
 from src.common.io_utils import JsonlWriter, ensure_dir, iter_jsonl, now_iso, read_json, read_jsonl, write_json
+from src.common.prompts import render_prompt, set_prompt_format
 from src.stage_b import b3_train as b3
 from src.stage_b.b2_select import selection_tag, student_tag
 from src.stage_c import metrics
@@ -184,6 +185,7 @@ def load_model(cfg: Mapping, adapter_dir: Path, device: str):
 
     t, model_id = cfg["training"], cfg["student"]["base_model_id"]
     tok = AutoTokenizer.from_pretrained(model_id)
+    set_prompt_format(tok, cfg["student"].get("prompt_format", "chat_template"))
     if tok.pad_token_id is None:
         tok.pad_token = tok.eos_token
     kw = dict(device_map=device, dtype=torch.bfloat16)
@@ -288,7 +290,7 @@ def evaluate_benchmark(model, tok, cfg: Mapping, bench: str, questions: Sequence
         return timing
     prompt_ids = {}
     for q in questions:
-        text = tok.apply_chat_template(b3.prompt_messages(q["question"]), tokenize=False, add_generation_prompt=True)
+        text = render_prompt(tok, q["question"])
         prompt_ids[q["qid"]] = tok(text, add_special_tokens=False)["input_ids"]
     with JsonlWriter(out_path) as writer:
         for n_done, (c, items) in enumerate(todo, 1):

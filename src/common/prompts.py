@@ -25,6 +25,39 @@ SYSTEM_PROMPT_TRAIN = "Please reason step by step, and put your final answer wit
 GEN_SEPARATOR = "\n\n"
 
 
+# ---------------------------------------------------------------- Prompt của mô hình học
+# Phần đề mà b1_fit chấm, b3_train huấn luyện và c1_evaluate sinh phải CÙNG MỘT chuỗi. Cả bốn nơi gọi render_prompt.
+# Định dạng đọc từ khoá student.prompt_format và được gắn vào tokenizer lúc nạp (set_prompt_format), để không đổi
+# chữ ký các hàm đang có. Tokenizer chưa được gắn gì thì dùng khuôn hội thoại, đúng như trước 04/11/2026.
+#   chat_template  khuôn hội thoại của tokenizer: [system] câu huấn luyện, [user] đề bài, rồi lượt assistant (Qwen).
+#   plain          văn bản thuần, chỉ dùng token đã được học: BOS, system, "Question: ...", "Answer:". Dành cho mô hình
+#                  bản nền mà các token đầu đề của khuôn hội thoại chưa được học (Llama-3). Gần định dạng gốc của GRAPE.
+# BOS phải nằm TRONG chuỗi vì mã mã hoá với add_special_tokens=False. Tokenizer không có BOS (Qwen) thì bỏ qua.
+PROMPT_FORMATS = ("chat_template", "plain")
+_FORMAT_ATTR = "qdrsr_prompt_format"
+
+
+def set_prompt_format(tok, fmt: str):
+    """Gắn định dạng prompt vào tokenizer. Trả về chính tokenizer đó."""
+    if fmt not in PROMPT_FORMATS:
+        raise SystemExit(f"student.prompt_format = {fmt!r} không hợp lệ. Hiện có: {list(PROMPT_FORMATS)}")
+    setattr(tok, _FORMAT_ATTR, fmt)
+    return tok
+
+
+def prompt_format_of(tok) -> str:
+    return getattr(tok, _FORMAT_ATTR, "chat_template")
+
+
+def render_prompt(tok, question: str) -> str:
+    """Phần đề của một mẫu: tới hết chỗ mô hình bắt đầu viết lời giải."""
+    if prompt_format_of(tok) == "plain":
+        bos = getattr(tok, "bos_token", None) or ""
+        return f"{bos}{SYSTEM_PROMPT_TRAIN}\n\nQuestion: {question}\n\nAnswer:\n"
+    messages = [{"role": "system", "content": SYSTEM_PROMPT_TRAIN}, {"role": "user", "content": question}]
+    return tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+
 def build_generation_messages(question: str, prompt_id: str = "rsr") -> list[dict]:
     """Tin nhắn gửi mô hình dạy.
 
