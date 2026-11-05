@@ -58,3 +58,25 @@ def test_llama_configs_load_and_stay_out_of_all():
         assert b2.selection_tag(c) == f"{m}.k3"
     names = {m for m, _a in b2.method_list(cfg, __import__("pathlib").Path(cfg.root))}
     assert not names & {"teacher_llama_first", "teacher_deepseek_first"}
+
+
+def test_llama_student_skips_localnat_and_lists_only_what_needs_no_it():
+    cfg = load_config(student="llama1b")
+    assert cfg.signals.skip_local_nat is True and cfg.methods == ["correct_only", "grape"]
+
+
+def test_new_controls_run_end_to_end_on_a_fit_without_localnat(tmp_path):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "stage_b"))
+    from test_b2_select import make_workdir
+    from src.common.io_utils import read_json
+    make_workdir(tmp_path, n_q=30, with_local=False, localnat=False)
+    out = tmp_path / "out"
+    share = {}
+    for m, who in (("correct_only", "llama70b"), ("teacher_llama_first", "llama70b"),
+                   ("teacher_deepseek_first", "deepseek")):
+        assert b2.main(["--workdir", str(tmp_path), "--outdir", str(out), "--method", m]) == 0
+        share[m] = read_json(out / f"select.{m}.k3.json")["teacher_share"].get(who, 0.0)
+    assert share["teacher_llama_first"] > share["correct_only"]
+    assert share["teacher_deepseek_first"] > 0.34

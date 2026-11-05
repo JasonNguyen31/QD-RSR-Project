@@ -17,3 +17,12 @@ training:
   load_in_4bit: false          # cùng đường với qwen1_5b: LoRA trên bfloat16, chấm Fam cũng ở 16-bit
   batch_size: 2                # CHƯA ĐO. Chạy check_vram --model meta-llama/Llama-3.2-1B --no-quant --loss chunked
   grad_accum: 8                # lô hiệu dụng 16, bằng qwen1_5b
+
+# Các phương án của Hướng 1 (grape, correct_only, teacher_*_first, familiarity_within_teacher) không dùng LocalNat.
+# Tắt để b1_fit chỉ chấm Fam/RSR/LARK (cùng một lượt forward) và không cần b1_localnat, vốn dựng prompt bằng
+# khuôn hội thoại riêng chưa hỗ trợ prompt_format. Giống qwen7b.
+signals:
+  skip_local_nat: true
+
+# --all chỉ chạy các phương án này. Hai đối chứng teacher_*_first và familiarity_within_teacher gọi riêng bằng --method.
+methods: [correct_only, grape]
