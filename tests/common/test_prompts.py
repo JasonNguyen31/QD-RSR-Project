@@ -80,3 +80,11 @@ def test_new_controls_run_end_to_end_on_a_fit_without_localnat(tmp_path):
         share[m] = read_json(out / f"select.{m}.k3.json")["teacher_share"].get(who, 0.0)
     assert share["teacher_llama_first"] > share["correct_only"]
     assert share["teacher_deepseek_first"] > 0.34
+
+
+def test_llama3b_config_matches_llama1b_where_it_should():
+    a, b = load_config(student="llama1b"), load_config(student="llama3b")
+    assert b2.student_tag(b) == "llama3b_base" and b.student.prompt_format == "plain"
+    assert b.signals.skip_local_nat is True and b.training.load_in_4bit is False
+    assert a.training.batch_size * a.training.grad_accum == b.training.batch_size * b.training.grad_accum == 16
+    assert list(b.eval.gen_batch) == [32, 16, 8]
