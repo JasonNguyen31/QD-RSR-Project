@@ -85,6 +85,6 @@ def test_new_controls_run_end_to_end_on_a_fit_without_localnat(tmp_path):
 def test_llama3b_config_matches_llama1b_where_it_should():
     a, b = load_config(student="llama1b"), load_config(student="llama3b")
     assert b2.student_tag(b) == "llama3b_base" and b.student.prompt_format == "plain"
-    assert b.signals.skip_local_nat is True and b.training.load_in_4bit is False
+    assert b.signals.skip_local_nat is True and b.training.load_in_4bit is True and b.training.batch_size == 1
     assert a.training.batch_size * a.training.grad_accum == b.training.batch_size * b.training.grad_accum == 16
     assert list(b.eval.gen_batch) == [32, 16, 8]
