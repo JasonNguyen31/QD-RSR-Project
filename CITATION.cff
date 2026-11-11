@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite it as below."
+type: software
+title: 'FQ-Select: code for "Selecting Reasoning Traces by Familiarity and Quality for Small Language Model Distillation"'
+abstract: >-
+  Code for every stage of the paper: candidate generation from three teachers,
+  answer checking, quality scoring, the selection rules (GRAPE, RSR, LARK,
+  Local Naturalness, FQ-Select and the controls Random@GRAPE, FWT, QWT), LoRA
+  fine-tuning, evaluation and local deployment with llama.cpp and Ollama.
+authors:
+  - family-names: Vu
+    given-names: Dinh-Hong
+    affiliation: Ton Duc Thang University
+    orcid: "https://orcid.org/0000-0001-8513-3942"
+  - family-names: Nguyen
+    given-names: Hoang Viet
+    affiliation: Ton Duc Thang University
+  - family-names: Nguyen
+    given-names: Le Ha Vi
+    affiliation: Ton Duc Thang University
+license: MIT
+repository-code: "https://github.com/JasonNguyen31/QD-RSR-Project"
+keywords:
+  - knowledge distillation
+  - chain-of-thought
+  - data selection
+  - small language models
