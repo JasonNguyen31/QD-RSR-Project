@@ -126,3 +126,18 @@ def test_sympy_rejects_text_that_python_would_parse_as_operator(pred, gold):
 ])
 def test_sympy_keeps_real_equivalences_from_the_full_pool(a, b):
     assert is_equiv(a, b)
+
+
+def test_sympy_equiv_works_without_proc(monkeypatch):
+    """Máy không có /proc (macOS): tiến trình con vẫn phải so được, không được chết và trả SAI (sửa 11/11/2026)."""
+    import builtins
+    from src.common import answers
+    real_open = builtins.open
+
+    def fake_open(path, *args, **kwargs):
+        if str(path).startswith("/proc/"):
+            raise FileNotFoundError(path)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", fake_open)
+    assert answers.sympy_equiv("2\\sqrt{3}", "\\sqrt{12}") is True

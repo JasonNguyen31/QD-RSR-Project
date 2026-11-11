@@ -289,9 +289,15 @@ def _sympy_equiv_core(a: str, b: str) -> bool:
 
 
 def _sympy_child(q, a, b):
-    import os, resource
-    vm = int(open("/proc/self/statm").read().split()[0]) * os.sysconf("SC_PAGE_SIZE")
-    resource.setrlimit(resource.RLIMIT_AS, (vm + (2 << 30), vm + (2 << 30)))
+    import os
+    try:
+        import resource
+        vm = int(open("/proc/self/statm").read().split()[0]) * os.sysconf("SC_PAGE_SIZE")
+        resource.setrlimit(resource.RLIMIT_AS, (vm + (2 << 30), vm + (2 << 30)))
+    except (OSError, ValueError):
+        # macOS không có /proc (sửa 11/11/2026): bỏ giới hạn bộ nhớ, vẫn giữ hạn 10 giây ở sympy_equiv. Trước bản
+        # sửa này, tiến trình con chết ngay trên Mac nên mọi phép so bằng sympy bị tính là SAI.
+        pass
     try:
         q.put(bool(_sympy_equiv_core(a, b)))
     except BaseException:  # noqa: BLE001
