@@ -230,7 +230,7 @@ def test_spearman_matches_known_values():
 
 
 @pytest.mark.parametrize("lang,needles", [("en", ["Prefer Qwen-72B", "mean of 2+ seeds", "teacher-identity control"]),
-                                          ("vi", ["Ưu tiên Qwen-72B", "trung bình từ 2 seed", "mức Correct-Only"])])
+                                          ("vi", ["Ưu tiên Qwen-72B", "trung bình từ 2 seed", "mức chọn ngẫu nhiên"])])
 def test_teacher_share_figure_uses_circles_only(lang, needles):
     rows = [{"tag": "correct_only.k3", "en": "Correct-Only", "vi": "Correct-Only", "group": "free", "seeds": 2,
              "acc": 47.6, "share": 28.7},
