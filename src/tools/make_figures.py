@@ -210,9 +210,16 @@ GROUP_STYLE = {           # nhãn hiển thị và màu, theo thứ tự dễ t�
     "math-L4": ("MATH level 4", BLUE),
     "math-L5": ("MATH level 5", PUR),
 }
+GROUP_LABEL_VI = {"gsm8k": "GSM8K", "math-L3": "MATH mức 3", "math-L4": "MATH mức 4", "math-L5": "MATH mức 5"}
+DIST_TEXT = {   # chữ của Hình phân bố; bản tiếng Việt thêm 11/11/2026 cho bài bản tiếng Việt
+    "en": {"dropped": "dropped (fewer than {m} correct)", "x": "Correct trajectories per question (out of {n})",
+           "y": "Share of questions"},
+    "vi": {"dropped": "bị loại (dưới {m} lời giải đúng)", "x": "Số lời giải đúng mỗi câu (trên {n})",
+           "y": "Tỉ lệ câu hỏi"},
+}
 
 
-def distribution_series(stats: Mapping) -> list[tuple[str, str, int, list[float]]]:
+def distribution_series(stats: Mapping, lang: str = "en") -> list[tuple[str, str, int, list[float]]]:
     """Từ stats.json của a3 ra (nhãn, màu, số câu, tỷ lệ % theo số chuỗi đúng 0..N).
 
     Dùng TỶ LỆ chứ không dùng số câu, vì các nhóm có cỡ khác nhau (lô pilot: 100 câu GSM8K
@@ -225,14 +232,15 @@ def distribution_series(stats: Mapping) -> list[tuple[str, str, int, list[float]
             continue
         hist = [g["correct_count_hist"][str(i)] for i in range(len(g["correct_count_hist"]))]
         n = sum(hist)
-        out.append((lab, color, n, [100 * v / n for v in hist]))
+        out.append((GROUP_LABEL_VI[key] if lang == "vi" else lab, color, n, [100 * v / n for v in hist]))
     if not out:
         raise SystemExit("stats.json không có nhóm nào trong gsm8k, math-L3, math-L4, math-L5.")
     return out
 
 
-def build_distribution(stats: Mapping) -> str:
-    series = distribution_series(stats)
+def build_distribution(stats: Mapping, lang: str = "en") -> str:
+    t = DIST_TEXT[lang]
+    series = distribution_series(stats, lang)
     n_bins = len(series[0][3])
     min_correct = stats.get("min_correct", 3)
 
@@ -254,7 +262,7 @@ def build_distribution(stats: Mapping) -> str:
     # vùng bị loại: số chuỗi đúng nhỏ hơn ngưỡng
     x_cut = L + pw * min_correct / n_bins
     s.add(f'<rect x="{L}" y="{T}" width="{x_cut - L}" height="{ph}" fill="#f3efe8"/>')
-    s.text((L + x_cut) / 2, T + 44, f"dropped (fewer than {min_correct} correct)", 30, AMB, "middle", "700")
+    s.text((L + x_cut) / 2, T + 44, t["dropped"].format(m=min_correct), 30, AMB, "middle", "700")
 
     # lưới và trục tung
     for v in range(0, top + 1, ystep):
@@ -277,9 +285,9 @@ def build_distribution(stats: Mapping) -> str:
     # nhãn trục hoành
     for i in range(n_bins):
         s.text(X(i), T + ph + 46, str(i), 32, INK, "middle")
-    s.text(L + pw / 2, T + ph + 110, f"Correct trajectories per question (out of {n_bins - 1})", 36, INK, "middle")
+    s.text(L + pw / 2, T + ph + 110, t["x"].format(n=n_bins - 1), 36, INK, "middle")
     s.add(f'<text x="58" y="{T + ph / 2}" transform="rotate(-90 58 {T + ph / 2})" text-anchor="middle" '
-          f'font-family="{FONT}" font-size="36" fill="{INK}">Share of questions</text>')
+          f'font-family="{FONT}" font-size="36" fill="{INK}">{t["y"]}</text>')
 
     # chú giải
     lx, ly = L + 10, 70
@@ -951,6 +959,8 @@ FIGURES = {
     "pipeline": ("fig1_pipeline", lambda a, cfg: build_pipeline()),
     "distribution": ("fig2_distribution", lambda a, cfg: build_distribution(
         json.loads(resolve_path(cfg, a.stats).read_text(encoding="utf-8")))),
+    "distribution_vi": ("fig2_distribution_vi", lambda a, cfg: build_distribution(
+        json.loads(resolve_path(cfg, a.stats).read_text(encoding="utf-8")), "vi")),
     "selection": ("fig3_selection", lambda a, cfg: build_selection()),
     # Hình cho báo cáo đồ án, đọc thẳng từ dữ liệu thật nên vẽ lại được khi dữ liệu đổi (Notion mục T4)
     "teachers": ("figA2_teachers", lambda a, cfg: build_teachers(cfg, a.workdir)),
@@ -988,7 +998,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     cfg = load_config()
     outdir = resolve_path(cfg, args.outdir)
     if args.figure == "all":
-        names = ["pipeline", "distribution"]
+        names = ["pipeline", "distribution", "distribution_vi"]
     elif args.figure == "report":
         names = REPORT
     elif args.figure == "results":

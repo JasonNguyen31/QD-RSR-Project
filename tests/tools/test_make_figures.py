@@ -42,6 +42,14 @@ def test_distribution_svg_marks_dropped_region():
     assert "fewer than 3 correct" in svg and "(n = 100)" in svg
 
 
+def test_distribution_vietnamese_labels():
+    svg = mf.build_distribution(_stats(gsm8k=[0, 1, 0, 2, 0, 0, 0, 1, 4, 92]), "vi")
+    ET.fromstring(svg)
+    for w in ("bị loại (dưới 3 lời giải đúng)", "Số lời giải đúng mỗi câu (trên 9)", "Tỉ lệ câu hỏi", "GSM8K"):
+        assert w in svg, w
+    assert "dropped" not in svg
+
+
 def test_distribution_rejects_empty_stats():
     with pytest.raises(SystemExit):
         mf.distribution_series({"per_group": {}})
