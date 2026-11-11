@@ -16,3 +16,11 @@ __pycache__/
 # file nen tam thoi va cache sinh tu dong
 *.tar.xz
 unsloth_compiled_cache/
+
+# không công khai: bản phản biện của GVHD, ghi chú cá nhân, gói dữ liệu Hugging Face, file vá đã áp
+phanbien.txt
+pbb.txt
+do_qual.txt
+kiem*_*.txt
+hf_release/
+*.patch

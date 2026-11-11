@@ -1,0 +1,12 @@
+# ĐỐI CHỨNG, không phải phương án (thêm 10/11/2026, theo phản biện bài báo ngày 07/11). Ô còn thiếu của bảng 2×2.
+# Ở mỗi câu, lấy top-k của GRAPE (cột grape) chỉ để biết mỗi mô hình dạy được bao nhiêu chỗ, rồi trong mỗi mô hình dạy
+# rút ngẫu nhiên ngần ấy chuỗi (thứ tự cố định như Correct-Only). Tỷ lệ mô hình dạy giống hệt GRAPE (75,3% Qwen).
+#   ngang GRAPE         -> lợi ích của GRAPE đến từ tỷ lệ mô hình dạy, chọn chuỗi quen trong mô hình dạy không thêm gì
+#   thấp hơn GRAPE      -> có tương tác: chọn chuỗi quen chỉ có ích khi đã nghiêng về Qwen
+# Cùng FWT (familiarity_within_teacher) cho hai đường phân rã: Random → FWT → GRAPE và Random → Random@GRAPE → GRAPE.
+select:
+  name: random_at_grape
+  pool: correct
+  rule: random_at_signal_shares
+  signal: grape
+  control: true

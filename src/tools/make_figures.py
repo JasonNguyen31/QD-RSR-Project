@@ -535,11 +535,11 @@ GROUP_COLOR = {"student": C_STUDENT, "surprise": C_SURPRISE, "teacher": C_TEACHE
 RESULT_TEXT = {
     "en": {"x": "Share of Qwen2.5-72B trajectories in the training set (%)", "y": "MATH-500 Acc@4 (%)",
            "groups": ["student familiarity", "student surprisal", "teacher-identity control", "no student signal"],
-           "seeds": ["mean of 2+ seeds", "1 seed"], "base": "Correct-Only", "dec": ".", "rho": "Spearman"},
+           "seeds": ["mean of 2+ seeds", "1 seed"], "base": "random-selection level", "dec": ".", "rho": "Spearman"},
     "vi": {"x": "Tỷ lệ chuỗi của Qwen2.5-72B trong tập huấn luyện (%)", "y": "Acc@4 trên MATH-500 (%)",
            "groups": ["mức quen thuộc của mô hình học", "độ bất ngờ với mô hình học", "đối chứng theo mô hình dạy",
                       "không dùng tín hiệu của mô hình học"],
-           "seeds": ["trung bình từ 2 seed", "1 seed"], "base": "mức Correct-Only", "dec": ",", "rho": "Spearman"},
+           "seeds": ["trung bình từ 2 seed", "1 seed"], "base": "mức chọn ngẫu nhiên", "dec": ",", "rho": "Spearman"},
 }
 
 

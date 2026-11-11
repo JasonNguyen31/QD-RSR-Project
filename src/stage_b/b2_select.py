@@ -392,6 +392,18 @@ def pick_signal_within_teacher(teachers: Sequence[str], values: np.ndarray, k: i
     return {"idx": sorted(idx), "tie": tie}
 
 
+def pick_random_at_signal_shares(teachers: Sequence[str], values: np.ndarray, k: int, direction: str) -> dict:
+    """Ô còn thiếu của bảng 2×2 (thêm 10/11, theo phản biện 07/11). Lấy top-k theo tín hiệu (như GRAPE) chỉ để biết
+    mỗi mô hình dạy được bao nhiêu chỗ; trong mỗi mô hình dạy rút ngẫu nhiên ngần ấy chuỗi, tức lấy các chuỗi đầu
+    theo thứ tự cố định như Correct-Only. Tỷ lệ mô hình dạy giống hệt GRAPE, lựa chọn trong mô hình dạy là ngẫu nhiên."""
+    ref = pick_topk(np.asarray(values, dtype=float), k, direction)
+    quota = Counter(teachers[i] for i in ref["idx"])
+    idx = []
+    for t, c in quota.items():
+        idx += [i for i, x in enumerate(teachers) if x == t][:c]
+    return {"idx": sorted(idx), "tie": ref["tie"]}
+
+
 def veto_count(n: int, k: int, drop: float) -> int:
     """Số chuỗi bị loại: phần drop kém nhất (làm tròn xuống), nhưng luôn còn ít nhất k chuỗi."""
     return max(0, min(n - k, int(np.floor(drop * n + 1e-9))))
@@ -500,6 +512,9 @@ def select_all(questions: Mapping[str, Mapping], cfg: Mapping) -> dict:
         elif rule == "signal_within_teacher":
             p = pick_signal_within_teacher(q["teacher"], signal_values(q, spec["signal"]), k,
                                            direction_of(cfg, spec["signal"]))
+        elif rule == "random_at_signal_shares":
+            p = pick_random_at_signal_shares(q["teacher"], signal_values(q, spec["signal"]), k,
+                                             direction_of(cfg, spec["signal"]))
         elif rule == "veto_within_teacher":
             vname = spec.get("veto_signal", "qual")
             p = pick_veto_within_teacher(q["teacher"], signal_values(q, spec["signal"]), signal_values(q, vname), k,
@@ -511,7 +526,8 @@ def select_all(questions: Mapping[str, Mapping], cfg: Mapping) -> dict:
                                float(spec["veto_drop"]), direction_of(cfg, spec["signal"]), direction_of(cfg, vname))
         else:
             raise SystemExit(f"select.rule không hợp lệ: {rule!r} (random, topk, objective, teacher, rank_sum, "
-                             f"quality_within_teacher, signal_within_teacher, veto_topk, veto_within_teacher)")
+                             f"quality_within_teacher, signal_within_teacher, random_at_signal_shares, veto_topk, "
+                             f"veto_within_teacher)")
         if spec.get("weights", "uniform") == "lark_soft":
             w = lark_weights([float(x) for x in q["signals"]["lark"]], k)
             if not {i for i, x in enumerate(w) if x > 0} <= set(p["idx"]):
