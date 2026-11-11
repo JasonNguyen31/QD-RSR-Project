@@ -615,6 +615,8 @@ def num(v: float, dec: str = ",", digits: int | None = None, sign: bool = False)
     if digits is None:
         txt = f"{v:g}"
     else:
+        if round(v, digits) == 0:                        # không in "−0,0": số làm tròn về 0 thì bỏ dấu âm
+            v = 0.0
         txt = f"{v:+.{digits}f}" if sign else f"{v:.{digits}f}"
     return txt.replace(".", dec).replace("-", "−")
 
@@ -837,26 +839,38 @@ def load_results(cfg, a) -> list[dict]:
 DECOMP = [("total", "grape.k3", "correct_only.k3", C_FREE),
           ("fam", "familiarity_within_teacher.k3", "correct_only.k3", C_STUDENT),
           ("teacher", "grape.k3", "familiarity_within_teacher.k3", C_TEACHER)]
+# Đường thứ hai (thêm 11/11/2026, theo phản biện 07/11): qua Random@GRAPE, giữ tỷ lệ mô hình dạy của GRAPE nhưng rút
+# ngẫu nhiên trong từng mô hình dạy. GRAPE − Correct-Only = (Random@GRAPE − Correct-Only) + (GRAPE − Random@GRAPE).
+# Cùng ba khoá total, fam, teacher và cùng màu với đường thứ nhất để hai bảng đọc song song được.
+DECOMP2 = [("total", "grape.k3", "correct_only.k3", C_FREE),
+           ("fam", "grape.k3", "random_at_grape.k3", C_STUDENT),
+           ("teacher", "random_at_grape.k3", "correct_only.k3", C_TEACHER)]
 DECOMP_TEXT = {
     "en": {"total": "Total gain: GRAPE − Correct-Only",
            "fam": "Familiar solution within each teacher: FWT − Correct-Only",
            "teacher": "Choice of teacher: GRAPE − FWT", "seed": "Seed", "pooled": "Pooled",
-           "y": "Δ MATH-500 Acc@4 (points)", "dec": "."},
+           "y": "Δ MATH-500 Acc@4 (points)", "dec": ".",
+           "y_short": "Δ Acc@4 (points)", "fam_g": "Familiar solution within each teacher", "teacher_g": "Choice of teacher",
+           "path1": "(a) Through FWT: familiar = FWT − Correct-Only, teacher = GRAPE − FWT",
+           "path2": "(b) Through Random@GRAPE: familiar = GRAPE − Random@GRAPE, teacher = Random@GRAPE − Correct-Only"},
     "vi": {"total": "Tổng lợi ích: GRAPE − Correct-Only",
            "fam": "Chọn lời giải quen trong từng mô hình dạy: FWT − Correct-Only",
            "teacher": "Chọn mô hình dạy: GRAPE − FWT", "seed": "Seed", "pooled": "Gộp",
-           "y": "Chênh lệch Acc@4 MATH-500 (điểm)", "dec": ","},
+           "y": "Chênh lệch Acc@4 MATH-500 (điểm)", "dec": ",",
+           "y_short": "Chênh lệch Acc@4 (điểm)", "fam_g": "Chọn lời giải quen trong từng mô hình dạy", "teacher_g": "Chọn mô hình dạy",
+           "path1": "(a) Qua FWT: lời giải quen = FWT − Correct-Only, mô hình dạy = GRAPE − FWT",
+           "path2": "(b) Qua Random@GRAPE: lời giải quen = GRAPE − Random@GRAPE, mô hình dạy = Random@GRAPE − Correct-Only"},
 }
 
 
 def decomposition_rows(results: Path, seeds: Sequence[int] | None = None, bench: str = "math500",
-                       n_boot: int = 2000) -> list[dict]:
+                       n_boot: int = 2000, spec: Sequence[tuple] = DECOMP) -> list[dict]:
     """Một nhóm cho mỗi seed mà ba tập cùng có, thêm một nhóm gộp các seed đó. Mỗi nhóm có ba vế (điểm %) kèm khoảng
     tin cậy 95% ghép cặp; gộp là trung bình từng câu qua các seed rồi mới ghép cặp, giống eval_table."""
     from src.tools.eval_table import find_runs, paired_bootstrap, pooled_question_acc
 
     runs = find_runs(results)
-    tags = {t for _, a, b, _ in DECOMP for t in (a, b)}
+    tags = {t for _, a, b, _ in spec for t in (a, b)}
     missing = [t for t in sorted(tags) if t not in runs]
     if missing:
         raise SystemExit(f"Thiếu kết quả của {', '.join(missing)} trong {results}.")
@@ -871,7 +885,7 @@ def decomposition_rows(results: Path, seeds: Sequence[int] | None = None, bench:
     out = []
     for g in groups:
         comps = []
-        for key, a, b, _ in DECOMP:
+        for key, a, b, _ in spec:
             r = paired_bootstrap(pooled_question_acc(runs[a], g, bench, n_samples),
                                  pooled_question_acc(runs[b], g, bench, n_samples), n_boot)
             if r is None:
@@ -881,18 +895,22 @@ def decomposition_rows(results: Path, seeds: Sequence[int] | None = None, bench:
     return out
 
 
-def build_decomposition(groups: Sequence[Mapping], lang: str = "en") -> str:
+def build_decomposition(groups: Sequence[Mapping], lang: str = "en", spec: Sequence[tuple] = DECOMP,
+                        title: str | None = None, yrange: tuple[float, float] | None = None,
+                        legend: bool = True, height: int = 760) -> str:
     """Cột nhóm theo seed, mỗi nhóm ba cột: tổng lợi ích, phần do chọn lời giải quen trong từng mô hình dạy, phần
     do chọn mô hình dạy. Râu là khoảng tin cậy 95% ghép cặp; dấu * khi khoảng không chứa 0."""
     t = DECOMP_TEXT[lang]
     if not groups:
         raise SystemExit("Không có nhóm nào để vẽ.")
-    W, H = 1500, 760
-    L, R, T, B = 130, 30, 150, 80
+    W, H = 1500, height
+    L, R, T, B = 130, 30, (150 if legend else 20) + (80 if title else 0), 80
     pw, ph = W - L - R, H - T - B
-    lo = min(c["lo"] for g in groups for c in g["comps"])
-    hi = max(c["hi"] for g in groups for c in g["comps"])
-    y0, y1 = float(int(min(lo, 0.0)) - 2), float(int(hi) + 2)
+    if yrange is None:
+        lo = min(c["lo"] for g in groups for c in g["comps"])
+        hi = max(c["hi"] for g in groups for c in g["comps"])
+        yrange = (float(int(min(lo, 0.0)) - 2), float(int(hi) + 2))
+    y0, y1 = yrange
 
     def Y(v: float) -> float:
         return T + ph - (v - y0) / (y1 - y0) * ph
@@ -906,8 +924,12 @@ def build_decomposition(groups: Sequence[Mapping], lang: str = "en") -> str:
     s.line(L, Y(0), L + pw, Y(0), GREY, 3)
     s.line(L, T, L, T + ph, GREY, 3)
     s.add(f'<text x="36" y="{T + ph / 2}" transform="rotate(-90 36 {T + ph / 2})" text-anchor="middle" '
-          f'font-family="{FONT}" font-size="30" fill="{INK}">{t["y"]}</text>')
-    for i, (key, _, _, c) in enumerate(DECOMP):          # chú giải ở trên, mỗi vế một dòng
+          f'font-family="{FONT}" font-size="30" fill="{INK}">{t["y"] if legend else t["y_short"]}</text>')
+    if title:                                            # tiêu đề bảng con hai dòng: tên đường (đậm), rồi công thức
+        head, _, formula = title.partition(": ")
+        s.text(L, T - 52, head, 26, INK, "start", "700")
+        s.text(L, T - 18, formula, 24, INK)
+    for i, (key, _, _, c) in enumerate(spec if legend else []):   # chú giải ở trên, mỗi vế một dòng
         swatch(s, L + 10, 34 + i * 40, c)
         s.text(L + 60, 34 + i * 40, t[key], 28, INK)
     gw = pw / len(groups)
@@ -916,7 +938,7 @@ def build_decomposition(groups: Sequence[Mapping], lang: str = "en") -> str:
         cx = L + gw * (gi + 0.5)
         lab = f'{t["seed"]} {g["seeds"][0]}' if len(g["seeds"]) == 1 else t["pooled"]
         s.text(cx, T + ph + 50, lab, 30, INK, "middle", "700" if len(g["seeds"]) > 1 else "400")
-        for ci, (comp, (_, _, _, c)) in enumerate(zip(g["comps"], DECOMP)):
+        for ci, (comp, (_, _, _, c)) in enumerate(zip(g["comps"], spec)):
             x = cx + (ci - 1) * (bw + 14) - bw / 2
             top, bot = (Y(comp["diff"]), Y(0)) if comp["diff"] >= 0 else (Y(0), Y(comp["diff"]))
             s.add(f'<rect x="{x:.1f}" y="{top:.1f}" width="{bw:.1f}" height="{max(bot - top, 1):.1f}" fill="{c}" '
@@ -930,6 +952,50 @@ def build_decomposition(groups: Sequence[Mapping], lang: str = "en") -> str:
             ty = Y(comp["hi"]) - 12 if comp["diff"] >= 0 else Y(comp["lo"]) + 34
             s.text(xm, ty, txt, 26, INK, "middle")
     return s.render()
+
+
+def build_decomposition_paths(g1: Sequence[Mapping], g2: Sequence[Mapping], lang: str = "en") -> str:
+    """Hai bảng xếp chồng, chung một thang trục tung và một chú giải: (a) đường qua FWT, (b) đường qua Random@GRAPE.
+    Cùng màu cho cùng một ý ở hai bảng; công thức của từng vế nằm ở tiêu đề bảng con. Bố cục gọn để bài vừa 15 trang."""
+    t = DECOMP_TEXT[lang]
+    allc = [c for g in list(g1) + list(g2) for c in g["comps"]]
+    yr = (float(int(min(min(c["lo"] for c in allc), 0.0)) - 2), float(int(max(c["hi"] for c in allc)) + 2))
+    W, L, ph, gap = 1500, 130, 560, 10
+    items = [(t["total"], C_FREE), (t["fam_g"], C_STUDENT), (t["teacher_g"], C_TEACHER)]
+    s = Svg(W, 0)
+    x, y = L + 10, 34                                    # chú giải chung, tự xuống dòng khi hết chỗ
+    for lab, c in items:
+        need = 50 + text_width(lab, 28) + 40
+        if x + need > W - 20:
+            x, y = L + 10, y + 40
+        swatch(s, x, y, c)
+        s.text(x + 50, y, lab, 28, INK)
+        x += need
+    head = y + 26
+    panels = [build_decomposition(g, lang, spec, t[k], yr, legend=False, height=ph)
+              for g, spec, k in ((g1, DECOMP, "path1"), (g2, DECOMP2, "path2"))]
+    H = head + 2 * ph + gap
+    body = "".join(f'<g transform="translate(0 {head + i * (ph + gap)})">{p[p.index(">") + 1:-len("</svg>")]}</g>'
+                   for i, p in enumerate(panels))
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">'
+            f'<rect width="{W}" height="{H}" fill="#ffffff"/>{"".join(s.parts)}{body}</svg>')
+
+
+def load_decomposition_paths(cfg, a) -> tuple[list[dict], list[dict]]:
+    from src.common.config import path_of
+
+    if "student" not in cfg:
+        cfg = load_config(student=a.student)
+    tag = f"{cfg['student']['key']}_base"
+    results = resolve_path(cfg, a.results) if a.results else path_of(cfg, "out_results") / "eval" / tag
+    out = []
+    for name, spec in (("FWT", DECOMP), ("Random@GRAPE", DECOMP2)):
+        groups = decomposition_rows(results, a.seeds, spec=spec)
+        for g in groups:
+            print(f"  [{name}] seed " + ",".join(map(str, g["seeds"])) + "  " + "  ".join(
+                f'{c["key"]} {c["diff"]:+.1f} [{c["lo"]:+.1f}; {c["hi"]:+.1f}]' for c in g["comps"]))
+        out.append(groups)
+    return out[0], out[1]
 
 
 def load_decomposition(cfg, a) -> list[dict]:
@@ -974,9 +1040,11 @@ FIGURES = {
     "teacher_share_vi": ("figC2_teacher_share_vi", lambda a, cfg: build_teacher_share(load_results(cfg, a), "vi")),
     "forest": ("figC1_forest_vi", lambda a, cfg: build_forest(load_results(cfg, a))),
     # Hình 4 của bài (thêm 01/11): tách lợi ích của GRAPE thành phần chọn lời giải quen và phần chọn mô hình dạy
-    "decomposition": ("fig4_decomposition", lambda a, cfg: build_decomposition(load_decomposition(cfg, a), "en")),
+    # Từ 11/11/2026 hình này có hai bảng: đường qua FWT và đường qua Random@GRAPE (cần kết quả random_at_grape.k3)
+    "decomposition": ("fig4_decomposition",
+                      lambda a, cfg: build_decomposition_paths(*load_decomposition_paths(cfg, a), "en")),
     "decomposition_vi": ("figC3_decomposition_vi",
-                         lambda a, cfg: build_decomposition(load_decomposition(cfg, a), "vi")),
+                         lambda a, cfg: build_decomposition_paths(*load_decomposition_paths(cfg, a), "vi")),
 }
 REPORT = ["teachers", "truncation", "lengths", "judge", "distance", "correlation"]
 RESULTS = ["teacher_share", "teacher_share_vi", "forest", "decomposition", "decomposition_vi"]

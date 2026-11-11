@@ -301,3 +301,48 @@ def test_decomposition_refuses_missing_set(tmp_path):
     _eval_run(res, "correct_only.k3", 42, [2, 2, 2, 2])
     with pytest.raises(SystemExit, match="familiarity_within_teacher"):
         mf.decomposition_rows(res, n_boot=50)
+
+
+def test_decomposition_second_path_through_random_at_grape(tmp_path):
+    """Đường thứ hai: GRAPE − Correct-Only = (Random@GRAPE − Correct-Only) + (GRAPE − Random@GRAPE); vẽ chung với
+    đường thứ nhất thành hai bảng (a), (b) cùng một thang trục tung."""
+    res = tmp_path / "eval"
+    for sd in (42, 43):
+        _eval_run(res, "correct_only.k3", sd, [2, 2, 2, 2])
+        _eval_run(res, "familiarity_within_teacher.k3", sd, [2, 2, 1, 3])
+        _eval_run(res, "random_at_grape.k3", sd, [4, 3, 2, 2])
+        _eval_run(res, "grape.k3", sd, [4, 4, 2, 2])
+    g1 = mf.decomposition_rows(res, n_boot=100)
+    g2 = mf.decomposition_rows(res, n_boot=100, spec=mf.DECOMP2)
+    for a, b in zip(g1, g2):
+        assert a["comps"][0]["diff"] == pytest.approx(b["comps"][0]["diff"])     # cùng một tổng
+        tot, fam, tch = (c["diff"] for c in b["comps"])
+        assert tot == pytest.approx(fam + tch)
+    assert g2[-1]["comps"][1]["diff"] == pytest.approx(6.25)                    # GRAPE − Random@GRAPE
+    assert g2[-1]["comps"][2]["diff"] == pytest.approx(18.75)                   # Random@GRAPE − Correct-Only
+    for lang, needles in (("en", ("(a) Through FWT", "teacher = GRAPE − FWT",
+                                  "(b) Through Random@GRAPE", "teacher = Random@GRAPE − Correct-Only",
+                                  "Choice of teacher", "Δ Acc@4 (points)", "+18.8")),
+                          ("vi", ("(b) Qua Random@GRAPE", "mô hình dạy = Random@GRAPE − Correct-Only", "18,8"))):
+        svg = mf.build_decomposition_paths(g1, g2, lang)
+        ET.fromstring(svg)
+        for w in needles:
+            assert w in svg, w
+        for k in ("path1", "path2"):                                             # tiêu đề bảng con không tràn
+            head, _, formula = mf.DECOMP_TEXT[lang][k].partition(": ")
+            assert formula, (lang, k)
+            assert mf.text_width(head, 26, True) < 1500 - 130 - 30, (lang, k)
+            assert mf.text_width(formula, 24) < 1500 - 130 - 30, (lang, k)
+
+
+def test_decomposition_second_path_refuses_missing_random_at_grape(tmp_path):
+    res = tmp_path / "eval"
+    _eval_run(res, "correct_only.k3", 42, [2, 2, 2, 2])
+    _eval_run(res, "grape.k3", 42, [4, 4, 2, 2])
+    with pytest.raises(SystemExit, match="random_at_grape"):
+        mf.decomposition_rows(res, n_boot=50, spec=mf.DECOMP2)
+
+
+def test_num_never_prints_negative_zero():
+    assert mf.num(-0.04, ".", 1, sign=True) == "+0.0"
+    assert mf.num(-0.06, ",", 1, sign=True) == "−0,1"
