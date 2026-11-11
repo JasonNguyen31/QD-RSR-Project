@@ -13,12 +13,13 @@ authors:
     affiliation: Ton Duc Thang University
     orcid: "https://orcid.org/0000-0001-8513-3942"
   - family-names: Nguyen
-    given-names: Hoang Viet
+    given-names: Hoang-Viet
     affiliation: Ton Duc Thang University
   - family-names: Nguyen Le
     given-names: Ha-Vi
     affiliation: Ton Duc Thang University
 license: MIT
+doi: "10.5281/zenodo.24126099"
 repository-code: "https://github.com/JasonNguyen31/QD-RSR-Project"
 keywords:
   - knowledge distillation
