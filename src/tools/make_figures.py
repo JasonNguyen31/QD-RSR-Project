@@ -122,79 +122,93 @@ def save(svg_text: str, name: str, outdir: Path) -> list[Path]:
 
 
 # ================================================================ Hình 1: pipeline
+PIPE_BOX_W = 290           # bề rộng mỗi ô của Hình 1; bài kiểm thử đo chữ trong ô theo font thật của máy
+PIPE_L1, PIPE_L2, PIPE_HEAD = 36, 25, 32   # cỡ chữ dòng đầu, dòng hai của ô và tiêu đề Stage
+
+
 def build_pipeline() -> str:
     """Pipeline ba giai đoạn của bài FQ-Select. Vẽ lại 12/11/2026 theo phản biện 07/11 (B5: hình nhiều khoảng trắng):
-    Stage B và Stage C chung một hàng, năm cột thẳng với năm ô của Stage A, nên hình thấp còn khoảng 60% bản cũ.
-    Ký hiệu khớp với bài: Fam(y|x), Qual(y), "solutions" thay cho "trajectories".
+    Stage B và Stage C chung một hàng, nên hình thấp còn khoảng 60% bản cũ. Ký hiệu khớp với bài: Fam(y|x), Qual(y),
+    "solutions" thay cho "trajectories". Sửa 13/11: hai khung B và C cách nhau rõ, tiêu đề nhỏ hơn để không tràn
+    khi máy vẽ bằng font rộng (DejaVu Sans trên Linux), hai ô của Stage C cách đều hai bên khung, đầu mũi tên tô đặc.
     Stage A làm một lần cho mọi phương án; Stage B tính Fam một lần cho mỗi mô hình học, rồi mỗi phương án chạy một
     quy tắc chọn và huấn luyện; Stage C đánh giá và đóng gói."""
     W, H = 2040, 900
     s = Svg(W, H)
     for mid, c in [("m-grey", GREY), ("m-blue", BLUE), ("m-pur", PUR), ("m-grn", GRN)]:
-        s.marker(mid, c)
+        s.defs.append(                                   # đầu mũi tên tô đặc, đủ lớn để không mất nét khi thu nhỏ
+            f'<marker id="{mid}" viewBox="0 0 20 20" refX="18" refY="10" markerWidth="22" markerHeight="22" '
+            f'orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M2,3 L18,10 L2,17 Z" '
+            f'fill="{c}" stroke="{c}" stroke-width="1.5" stroke-linejoin="round"/></marker>')
 
     def frame(x, y, w, h, color):
         s.add(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="40" fill="none" stroke="{color}" '
               f'stroke-width="4" stroke-dasharray="22 14"/>')
 
     def header(x, y, bold, rest):
-        s.text(x, y, bold, 40, INK, weight="700")
-        s.text(x + text_width(bold, 40, True) + 26, y, rest, 40, DIM)
+        s.text(x, y, bold, PIPE_HEAD, INK, weight="700")
+        s.text(x + text_width(bold, PIPE_HEAD, True) + 20, y, rest, PIPE_HEAD, DIM)
 
-    BW, BH = 316, 145
+    BW, BH = PIPE_BOX_W, 145
 
     def box(cx, y, bg, stroke, tx, l1, l2):
         s.add(f'<rect x="{cx - BW / 2}" y="{y}" width="{BW}" height="{BH}" rx="24" fill="{bg}" '
               f'stroke="{stroke}" stroke-width="2.4"/>')
-        s.text(cx, y + 63, l1, 42, tx, "middle", "700")
-        s.text(cx, y + 114, l2, 32, tx, "middle")
+        s.text(cx, y + 63, l1, PIPE_L1, tx, "middle", "700")
+        s.text(cx, y + 112, l2, PIPE_L2, tx, "middle")
 
-    def arrow(x1, x2, y, color=GREY, marker="m-grey"):
-        s.line(x1 + BW / 2 + 4, y, x2 - BW / 2 - 8, y, color, marker=marker)
+    def arrow(x1, x2, y, color=GREY, marker="m-grey", width=3.2):
+        s.line(x1 + BW / 2 + 3, y, x2 - BW / 2 - 3, y, color, width, marker=marker)
 
-    X = [300, 661, 1022, 1383, 1743]                     # năm cột dùng chung cho hai hàng
-
-    # Stage A: sinh, lọc đáp án, chấm chất lượng một lần cho mọi phương án và mọi mô hình học
+    # Stage A: năm ô cách đều trong khung 120..1924
+    AX = [300, 661, 1022, 1383, 1743]
     AY = 120
     frame(120, 30, 1804, 270, BLUE)
-    header(163, 95, "Stage A:", "prepare data once")
-    for cx, (a, b) in zip(X, [("2,000", "questions"), ("3 teachers", "× 3 samples"), ("18,000", "solutions"),
-                              ("answer", "filtering"), ("Qual(y)", "judge + rules")]):
+    header(163, 92, "Stage A:", "prepare data once")
+    for cx, (a, b) in zip(AX, [("2,000", "questions"), ("3 teachers", "× 3 samples"), ("18,000", "solutions"),
+                               ("answer", "filtering"), ("Qual(y)", "judge + rules")]):
         box(cx, AY, BLUE_BG, BLUE, BLUE_TX, a, b)
     for i in range(4):
-        arrow(X[i], X[i + 1], AY + BH / 2)
+        arrow(AX[i], AX[i + 1], AY + BH / 2)
 
-    # Stage B (ba cột đầu) và Stage C (hai cột cuối) chung một hàng
-    BY, top, bot = 545, 440, 870
-    frame(120, top, 1083, bot - top, PUR)
-    header(700, top + 65, "Stage B:", "select and train")   # đặt bên phải hai mũi tên đi vào Fam và bước chọn
-    frame(1222, top, 702, bot - top, GRN)
-    header(1265, top + 65, "Stage C:", "evaluate and deploy")
-    for cx, (a, b), (bg, st, tx) in zip(
-            X, [("Fam(y|x)", "once per student"), ("select k = 3", "one rule per method"),
-                ("LoRA", "5,685 samples each"), ("6 benchmarks", "Acc@4, Pass@4"), ("GGUF", "Ollama, LM Studio")],
-            [(PUR_BG, PUR, PUR_TX)] * 3 + [(GRN_BG, GRN, GRN_TX)] * 2):
-        box(cx, BY, bg, st, tx, a, b)
-    arrow(X[0], X[1], BY + BH / 2)
-    arrow(X[1], X[2], BY + BH / 2)
-    arrow(X[2], X[3], BY + BH / 2, GRN, "m-grn")             # adapter đã tinh chỉnh sang đánh giá
-    arrow(X[3], X[4], BY + BH / 2)
-    s.text((X[3] + X[4]) / 2, BY + BH + 70, "one adapter per student × method × seed", 29, GRN_TX, "middle")
+    # Hàng dưới: khung B (120..1160) và khung C (1240..1924), cách nhau 80
+    top, bot, BY = 440, 870, 545
+    bx0, bx1, cx0, cx1 = 120, 1160, 1240, 1924
+    gap_b = (bx1 - bx0 - 2 * 35 - 3 * BW) / 2            # ba ô B, lề trong 35 mỗi bên
+    BX = [bx0 + 35 + BW / 2 + i * (BW + gap_b) for i in range(3)]
+    gap_c = 70
+    pad_c = (cx1 - cx0 - 2 * BW - gap_c) / 2              # hai ô C cách đều hai bên khung
+    CX = [cx0 + pad_c + BW / 2, cx0 + pad_c + BW * 1.5 + gap_c]
+    frame(bx0, top, bx1 - bx0, bot - top, PUR)
+    frame(cx0, top, cx1 - cx0, bot - top, GRN)
+    header(BX[1] + 40, top + 62, "Stage B:", "select and train")   # bên phải hai mũi tên đi vào Fam và bước chọn
+    header(cx0 + pad_c, top + 62, "Stage C:", "evaluate and deploy")
+    for cx, (a, b) in zip(BX, [("Fam(y|x)", "once per student"), ("select k = 3", "one rule per method"),
+                               ("LoRA", "5,685 samples each")]):
+        box(cx, BY, PUR_BG, PUR, PUR_TX, a, b)
+    for cx, (a, b) in zip(CX, [("evaluate", "6 benchmarks"), ("GGUF", "Ollama, LM Studio")]):
+        box(cx, BY, GRN_BG, GRN, GRN_TX, a, b)
+    arrow(BX[0], BX[1], BY + BH / 2)
+    arrow(BX[1], BX[2], BY + BH / 2)
+    arrow(BX[2], CX[0], BY + BH / 2, PUR, "m-pur")       # adapter từ Stage B sang đánh giá; màu theo giai đoạn
+                                                         # nguồn, như hai mũi tên xanh dương từ Stage A
+    arrow(CX[0], CX[1], BY + BH / 2)
+    s.text((CX[0] + CX[1]) / 2, BY + BH + 70, "one adapter per student × method × seed", 27, GRN_TX, "middle")
 
     # A -> B: hai nhánh, nhánh vào Fam đi cao hơn để hai đường không cắt nhau
     ya_bot, y1, y2 = AY + BH, 352, 410
-    s.poly([(X[3], ya_bot), (X[3], y1), (X[0], y1), (X[0], BY - 6)], BLUE, "m-blue")
-    s.text((X[0] + X[3]) / 2, y1 - 12, "correct candidates, read by the student", 30, BLUE_TX, "middle")
-    s.poly([(X[4], ya_bot), (X[4], y2), (X[1], y2), (X[1], BY - 6)], BLUE, "m-blue")
-    s.text((X[1] + X[4]) / 2 + 120, y2 - 12, "cached Qual(y), reused by every method", 30, BLUE_TX, "middle")
+    s.poly([(AX[3], ya_bot), (AX[3], y1), (BX[0], y1), (BX[0], BY - 4)], BLUE, "m-blue", width=3.6)
+    s.text((BX[0] + AX[3]) / 2, y1 - 12, "correct candidates, read by the student", 28, BLUE_TX, "middle")
+    s.poly([(AX[4], ya_bot), (AX[4], y2), (BX[1], y2), (BX[1], BY - 4)], BLUE, "m-blue", width=3.6)
+    s.text((BX[1] + AX[4]) / 2 + 120, y2 - 12, "cached Qual(y), reused by every method", 28, BLUE_TX, "middle")
 
     # vòng lặp trong Stage B: vòng trong về bước chọn (đổi phương án), vòng ngoài về Fam (đổi mô hình học)
     yb_bot = BY + BH
     ya, yb = yb_bot + 62, yb_bot + 128
-    s.poly([(X[2] - 40, yb_bot), (X[2] - 40, ya), (X[1], ya), (X[1], yb_bot + 6)], PUR, "m-pur", True, 3.4)
-    s.text((X[1] + X[2] - 40) / 2, ya - 14, "next method", 29, PUR_TX, "middle")
-    s.poly([(X[2] + 40, yb_bot), (X[2] + 40, yb), (X[0], yb), (X[0], yb_bot + 6)], PUR, "m-pur", True, 3.4)
-    s.text((X[0] + X[2]) / 2, yb + 36, "next student: recompute Fam", 29, PUR_TX, "middle")
+    s.poly([(BX[2] - 40, yb_bot), (BX[2] - 40, ya), (BX[1], ya), (BX[1], yb_bot + 4)], PUR, "m-pur", True, 3.4)
+    s.text((BX[1] + BX[2] - 40) / 2, ya - 14, "next method", 27, PUR_TX, "middle")
+    s.poly([(BX[2] + 40, yb_bot), (BX[2] + 40, yb), (BX[0], yb), (BX[0], yb_bot + 4)], PUR, "m-pur", True, 3.4)
+    s.text((BX[0] + BX[2]) / 2, yb + 34, "next student: recompute Fam", 27, PUR_TX, "middle")
     return s.render()
 
 

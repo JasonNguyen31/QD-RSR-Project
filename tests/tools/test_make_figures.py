@@ -25,6 +25,22 @@ def test_pipeline_is_valid_svg_with_all_boxes():
     assert "QLoRA" not in svg        # 1,5B dùng LoRA 16-bit, chỉ 7B dùng QLoRA (chốt 02/10); xem phần Thiết lập
 
 
+def test_pipeline_text_fits_boxes_and_frames():
+    """Sửa 13/11: trên máy Windows (font DejaVu Sans) chữ trong ô và tiêu đề Stage B tràn ra ngoài. text_width đo bằng
+    font cairo thật của máy chạy test, nên bài này bắt được lỗi tràn đúng trên máy vẽ hình."""
+    w = mf.PIPE_BOX_W - 16
+    for txt in ("2,000", "3 teachers", "18,000", "answer", "Qual(y)", "Fam(y|x)", "select k = 3", "LoRA",
+                "evaluate", "GGUF"):
+        assert mf.text_width(txt, mf.PIPE_L1, True) < w, txt
+    for txt in ("questions", "× 3 samples", "solutions", "filtering", "judge + rules", "once per student",
+                "one rule per method", "5,685 samples each", "6 benchmarks", "Ollama, LM Studio"):
+        assert mf.text_width(txt, mf.PIPE_L2) < w, txt
+    head = lambda b, r: mf.text_width(b, mf.PIPE_HEAD, True) + 20 + mf.text_width(r, mf.PIPE_HEAD)
+    assert head("Stage B:", "select and train") < 1160 - 25 - (35 + mf.PIPE_BOX_W * 1.5 + 120 + 40 + (
+        1160 - 120 - 70 - 3 * mf.PIPE_BOX_W) / 2)            # từ chỗ đặt tiêu đề B tới mép phải khung B
+    assert head("Stage C:", "evaluate and deploy") < 1924 - 1240 - 2 * 20
+
+
 def test_distribution_uses_shares_not_counts():
     """Nhóm 100 câu và nhóm 20 câu có cùng hình dạng phải cho cùng tỷ lệ."""
     big = [0] * 9 + [100]
