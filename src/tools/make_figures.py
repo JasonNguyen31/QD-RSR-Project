@@ -183,7 +183,7 @@ def build_pipeline() -> str:
     frame(cx0, top, cx1 - cx0, bot - top, GRN)
     header(BX[1] + 40, top + 62, "Stage B:", "select and train")   # bên phải hai mũi tên đi vào Fam và bước chọn
     header(cx0 + pad_c, top + 62, "Stage C:", "evaluate and deploy")
-    for cx, (a, b) in zip(BX, [("Fam(y|x)", "once per student"), ("select k = 3", "one rule per method"),
+    for cx, (a, b) in zip(BX, [("Fam(y|x)", "once per student"), ("select k = 3", "once per rule"),
                                ("LoRA", "5,685 samples each")]):
         box(cx, BY, PUR_BG, PUR, PUR_TX, a, b)
     for cx, (a, b) in zip(CX, [("evaluate", "6 benchmarks"), ("GGUF", "Ollama, LM Studio")]):
@@ -193,20 +193,20 @@ def build_pipeline() -> str:
     arrow(BX[2], CX[0], BY + BH / 2, PUR, "m-pur")       # adapter từ Stage B sang đánh giá; màu theo giai đoạn
                                                          # nguồn, như hai mũi tên xanh dương từ Stage A
     arrow(CX[0], CX[1], BY + BH / 2)
-    s.text((CX[0] + CX[1]) / 2, BY + BH + 70, "one adapter per student × method × seed", 27, GRN_TX, "middle")
+    s.text((CX[0] + CX[1]) / 2, BY + BH + 70, "one adapter per student × rule × seed", 27, GRN_TX, "middle")
 
     # A -> B: hai nhánh, nhánh vào Fam đi cao hơn để hai đường không cắt nhau
     ya_bot, y1, y2 = AY + BH, 352, 410
     s.poly([(AX[3], ya_bot), (AX[3], y1), (BX[0], y1), (BX[0], BY - 4)], BLUE, "m-blue", width=3.6)
     s.text((BX[0] + AX[3]) / 2, y1 - 12, "correct candidates, read by the student", 28, BLUE_TX, "middle")
     s.poly([(AX[4], ya_bot), (AX[4], y2), (BX[1], y2), (BX[1], BY - 4)], BLUE, "m-blue", width=3.6)
-    s.text((BX[1] + AX[4]) / 2 + 120, y2 - 12, "cached Qual(y), reused by every method", 28, BLUE_TX, "middle")
+    s.text((BX[1] + AX[4]) / 2 + 120, y2 - 12, "cached Qual(y), reused by every rule", 28, BLUE_TX, "middle")
 
     # vòng lặp trong Stage B: vòng trong về bước chọn (đổi phương án), vòng ngoài về Fam (đổi mô hình học)
     yb_bot = BY + BH
     ya, yb = yb_bot + 62, yb_bot + 128
     s.poly([(BX[2] - 40, yb_bot), (BX[2] - 40, ya), (BX[1], ya), (BX[1], yb_bot + 4)], PUR, "m-pur", True, 3.4)
-    s.text((BX[1] + BX[2] - 40) / 2, ya - 14, "next method", 27, PUR_TX, "middle")
+    s.text((BX[1] + BX[2] - 40) / 2, ya - 14, "next rule", 27, PUR_TX, "middle")
     s.poly([(BX[2] + 40, yb_bot), (BX[2] + 40, yb), (BX[0], yb), (BX[0], yb_bot + 4)], PUR, "m-pur", True, 3.4)
     s.text((BX[0] + BX[2]) / 2, yb + 34, "next student: recompute Fam", 27, PUR_TX, "middle")
     return s.render()
@@ -530,7 +530,7 @@ GRID_C, LEAD_C = "#e8e7e3", "#a9a8a2"
 # (free). Tập không có trong bảng thì không vẽ. Kho không có Qwen không đưa vào vì tỷ lệ Qwen luôn bằng 0 và khác kho.
 RESULT_SETS = {
     "no_filter.k3": ("No-Filter", "No-Filter", "free"),
-    "correct_only.k3": ("Correct-Only", "Correct-Only", "free"),
+    "correct_only.k3": ("Random", "Correct-Only", "free"),
     "token_length.k3": ("Token-Length", "Token-Length", "free"),
     "quality_only.k3": ("Quality-only", "Quality-only", "free"),
     "quality_within_teacher.k3": ("Quality within teacher", "QWT (chất lượng)", "free"),
@@ -542,21 +542,21 @@ RESULT_SETS = {
     "rsr.k3": ("RSR", "RSR", "surprise"),
     "lark.k3": ("LARK", "LARK", "surprise"),
     "fit_quality.k3": ("QD-RSR", "QD-RSR", "surprise"),
-    "teacher_qwen_first.k3": ("Prefer Qwen-72B", "Ưu tiên Qwen-72B", "teacher"),
-    "teacher_qwen_last.k3": ("Avoid Qwen-72B", "Tránh Qwen-72B", "teacher"),
+    "teacher_qwen_first.k3": ("Prefer Qwen", "Ưu tiên Qwen-72B", "teacher"),
+    "teacher_qwen_last.k3": ("Avoid Qwen", "Tránh Qwen-72B", "teacher"),
 }
 # Tập in đậm là phương án đề xuất: hai bản FQ-Select (trước 20/10 là fit_quality.k3 của hướng QD-RSR cũ).
 OURS, BASE = ("fq_select.k3", "fq_veto_judge.k3"), "correct_only.k3"
 GROUP_ORDER = ["student", "surprise", "teacher", "free"]
 GROUP_COLOR = {"student": C_STUDENT, "surprise": C_SURPRISE, "teacher": C_TEACHER, "free": C_FREE}
 RESULT_TEXT = {
-    "en": {"x": "Share of Qwen2.5-72B trajectories in the training set (%)", "y": "MATH-500 Acc@4 (%)",
+    "en": {"x": "Share of Qwen2.5-72B solutions in the training set (%)", "y": "MATH-500 Acc@4 (%)",
            "groups": ["student familiarity", "student surprisal", "teacher-identity control", "no student signal"],
-           "seeds": ["mean of 2+ seeds", "1 seed"], "base": "random-selection level", "dec": ".", "rho": "Spearman"},
+           "seeds": ["mean of 2+ seeds", "1 seed"], "seeds_n": "mean of {n} seeds", "base": "random-selection level", "dec": ".", "rho": "Spearman"},
     "vi": {"x": "Tỷ lệ chuỗi của Qwen2.5-72B trong tập huấn luyện (%)", "y": "Acc@4 trên MATH-500 (%)",
            "groups": ["mức quen thuộc của mô hình học", "độ bất ngờ với mô hình học", "đối chứng theo mô hình dạy",
                       "không dùng tín hiệu của mô hình học"],
-           "seeds": ["trung bình từ 2 seed", "1 seed"], "base": "mức chọn ngẫu nhiên", "dec": ",", "rho": "Spearman"},
+           "seeds": ["trung bình từ 2 seed", "1 seed"], "seeds_n": "trung bình {n} seed", "base": "mức chọn ngẫu nhiên", "dec": ",", "rho": "Spearman"},
 }
 
 
@@ -695,13 +695,15 @@ def build_teacher_share(rows: Sequence[Mapping], lang: str = "en") -> str:
     groups = [g for g in GROUP_ORDER if any(r["group"] == g for r in pts)]
     labels = [t["groups"][GROUP_ORDER.index(g)] for g in groups]
     dy, n_leg = 40, len(groups) + 2
-    lw = max(text_width(x, LS) for x in labels + t["seeds"]) + 60
+    counts = {r["seeds"] for r in multi}                 # mọi chấm đặc cùng số seed thì ghi đúng số đó
+    seed_labels = [t["seeds_n"].format(n=counts.pop()) if len(counts) == 1 else t["seeds"][0], t["seeds"][1]]
+    lw = max(text_width(x, LS) for x in labels + seed_labels) + 60
     lx, ly = L + pw - lw, T + ph - n_leg * dy - 10
     boxes.append((lx - 10, ly - 10, lw + 10, n_leg * dy + 20))
     for i, (g, lab) in enumerate(zip(groups, labels)):
         swatch(s, lx, ly + 26 + i * dy, GROUP_COLOR[g])
         s.text(lx + 50, ly + 26 + i * dy, lab, LS, DIM)
-    for i, (filled, lab) in enumerate(zip([True, False], t["seeds"])):
+    for i, (filled, lab) in enumerate(zip([True, False], seed_labels)):
         dot(s, lx + 18, ly + 17 + (len(groups) + i) * dy, C_FREE, filled, 10)
         s.text(lx + 50, ly + 26 + (len(groups) + i) * dy, lab, LS, DIM)
 
@@ -855,13 +857,13 @@ DECOMP2 = [("total", "grape.k3", "correct_only.k3", C_FREE),
            ("fam", "grape.k3", "random_at_grape.k3", C_STUDENT),
            ("teacher", "random_at_grape.k3", "correct_only.k3", C_TEACHER)]
 DECOMP_TEXT = {
-    "en": {"total": "Total gain: GRAPE − Correct-Only",
-           "fam": "Familiar solution within each teacher: FWT − Correct-Only",
+    "en": {"total": "Total gain: GRAPE − Random",
+           "fam": "Familiar solution within each teacher: FWT − Random",
            "teacher": "Choice of teacher: GRAPE − FWT", "seed": "Seed", "pooled": "Pooled",
            "y": "Δ MATH-500 Acc@4 (points)", "dec": ".",
            "y_short": "Δ Acc@4 (points)", "fam_g": "Familiar solution within each teacher", "teacher_g": "Choice of teacher",
-           "path1": "(a) Through FWT: familiar = FWT − Correct-Only, teacher = GRAPE − FWT",
-           "path2": "(b) Through Random@GRAPE: familiar = GRAPE − Random@GRAPE, teacher = Random@GRAPE − Correct-Only"},
+           "path1": "(a) Through FWT: familiar = FWT − Random, teacher = GRAPE − FWT",
+           "path2": "(b) Through Random@GRAPE: familiar = GRAPE − Random@GRAPE, teacher = Random@GRAPE − Random"},
     "vi": {"total": "Tổng lợi ích: GRAPE − Correct-Only",
            "fam": "Chọn lời giải quen trong từng mô hình dạy: FWT − Correct-Only",
            "teacher": "Chọn mô hình dạy: GRAPE − FWT", "seed": "Seed", "pooled": "Gộp",

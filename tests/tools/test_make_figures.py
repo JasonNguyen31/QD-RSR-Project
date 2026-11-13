@@ -16,7 +16,7 @@ def test_pipeline_is_valid_svg_with_all_boxes():
     svg = mf.build_pipeline()
     ET.fromstring(svg)                                   # cú pháp XML hợp lệ
     for word in ("Stage A:", "Stage B:", "Stage C:", "Fam(y|x)", "select k = 3", "5,685 samples", ">LoRA<",
-                 "next method", "next student", "correct candidates", "cached Qual(y)", "18,000", ">solutions<"):
+                 "next rule", "next student", "correct candidates", "cached Qual(y)", "18,000", ">solutions<"):
         assert word in svg, word
     # ký hiệu phải khớp với bài (phản biện 07/11): không còn Fam(t, m), Qual(t) hay "trajectories"
     assert "Fam(t" not in svg and "Qual(t)" not in svg and "trajectories" not in svg
@@ -33,7 +33,7 @@ def test_pipeline_text_fits_boxes_and_frames():
                 "evaluate", "GGUF"):
         assert mf.text_width(txt, mf.PIPE_L1, True) < w, txt
     for txt in ("questions", "× 3 samples", "solutions", "filtering", "judge + rules", "once per student",
-                "one rule per method", "5,685 samples each", "6 benchmarks", "Ollama, LM Studio"):
+                "once per rule", "5,685 samples each", "6 benchmarks", "Ollama, LM Studio"):
         assert mf.text_width(txt, mf.PIPE_L2) < w, txt
     head = lambda b, r: mf.text_width(b, mf.PIPE_HEAD, True) + 20 + mf.text_width(r, mf.PIPE_HEAD)
     assert head("Stage B:", "select and train") < 1160 - 25 - (35 + mf.PIPE_BOX_W * 1.5 + 120 + 40 + (
@@ -256,12 +256,12 @@ def test_spearman_matches_known_values():
     assert mf.spearman_rho([1, 2, 2, 3], [1, 2, 3, 4]) == pytest.approx(0.9486833, abs=1e-6)
 
 
-@pytest.mark.parametrize("lang,needles", [("en", ["Prefer Qwen-72B", "mean of 2+ seeds", "teacher-identity control"]),
-                                          ("vi", ["Ưu tiên Qwen-72B", "trung bình từ 2 seed", "mức chọn ngẫu nhiên"])])
+@pytest.mark.parametrize("lang,needles", [("en", ["Prefer Qwen", "mean of 2 seeds", "teacher-identity control", "solutions in the training set"]),
+                                          ("vi", ["Ưu tiên Qwen-72B", "trung bình 2 seed", "mức chọn ngẫu nhiên"])])
 def test_teacher_share_figure_uses_circles_only(lang, needles):
     rows = [{"tag": "correct_only.k3", "en": "Correct-Only", "vi": "Correct-Only", "group": "free", "seeds": 2,
              "acc": 47.6, "share": 28.7},
-            {"tag": "teacher_qwen_first.k3", "en": "Prefer Qwen-72B", "vi": "Ưu tiên Qwen-72B", "group": "teacher",
+            {"tag": "teacher_qwen_first.k3", "en": "Prefer Qwen", "vi": "Ưu tiên Qwen-72B", "group": "teacher",
              "seeds": 1, "acc": 54.9, "share": 80.3},
             {"tag": "fit_quality.k3", "en": "QD-RSR (λ = 0)", "vi": "QD-RSR (λ = 0)", "group": "student", "seeds": 2,
              "acc": 45.5, "share": 5.8}]
@@ -340,7 +340,7 @@ def test_decomposition_second_path_through_random_at_grape(tmp_path):
     assert g2[-1]["comps"][1]["diff"] == pytest.approx(6.25)                    # GRAPE − Random@GRAPE
     assert g2[-1]["comps"][2]["diff"] == pytest.approx(18.75)                   # Random@GRAPE − Correct-Only
     for lang, needles in (("en", ("(a) Through FWT", "teacher = GRAPE − FWT",
-                                  "(b) Through Random@GRAPE", "teacher = Random@GRAPE − Correct-Only",
+                                  "(b) Through Random@GRAPE", "teacher = Random@GRAPE − Random",
                                   "Choice of teacher", "Δ Acc@4 (points)", "+18.8")),
                           ("vi", ("(b) Qua Random@GRAPE", "mô hình dạy = Random@GRAPE − Correct-Only", "18,8"))):
         svg = mf.build_decomposition_paths(g1, g2, lang)
