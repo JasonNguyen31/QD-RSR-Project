@@ -15,9 +15,12 @@ def _stats(**groups):
 def test_pipeline_is_valid_svg_with_all_boxes():
     svg = mf.build_pipeline()
     ET.fromstring(svg)                                   # cú pháp XML hợp lệ
-    for word in ("Stage A:", "Stage B:", "Stage C:", "Fam(t, m)", "select k = 3", "5,685 samples", ">LoRA<",
-                 "next method", "next student", "correct candidates", "cached Qual(t)"):
+    for word in ("Stage A:", "Stage B:", "Stage C:", "Fam(y|x)", "select k = 3", "5,685 samples", ">LoRA<",
+                 "next method", "next student", "correct candidates", "cached Qual(y)", "18,000", ">solutions<"):
         assert word in svg, word
+    # ký hiệu phải khớp với bài (phản biện 07/11): không còn Fam(t, m), Qual(t) hay "trajectories"
+    assert "Fam(t" not in svg and "Qual(t)" not in svg and "trajectories" not in svg
+    assert 'height="900"' in svg                         # hình gọn: B và C chung một hàng (vẽ lại 12/11)
     assert "embed" not in svg and "exact search" not in svg   # bỏ nhánh embedding và ô tìm kiếm của QD-RSR (01/11)
     assert "QLoRA" not in svg        # 1,5B dùng LoRA 16-bit, chỉ 7B dùng QLoRA (chốt 02/10); xem phần Thiết lập
 
