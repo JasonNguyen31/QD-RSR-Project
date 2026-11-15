@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -750,10 +751,15 @@ def build_teacher_share(rows: Sequence[Mapping], lang: str = "en") -> str:
     for r in sorted([r for r in pts if r["share"] >= 45], key=lambda r: (r["tag"] == "random_at_grape.k3", -r["acc"])):
         px, py = X(r["share"]), Y(r["acc"])
         w = text_width(r[lang], FS, r["tag"] in OURS)
-        cands = [(px - 24, py + 10, "end"), (px + 24, py + 10, "start"), (px - 16, py - 26, "end"),
+        # điểm có vòng Random@GRAPE bao quanh (bán kính 22): nhãn đặt xa hơn để chữ không chạm vòng (sửa 15/11)
+        ring = any(o is not r and abs(X(o["share"]) - px) < 8 and abs(Y(o["acc"]) - py) < 8 for o in pts)
+        off = 52 if ring else 24
+        cands = [(px - off, py + 10, "end"), (px + off, py + 10, "start"), (px - 16, py - 26, "end"),
                  (px + 16, py - 26, "start"), (px - 16, py + 46, "end"), (px + 16, py + 46, "start"),
                  (px - 60, py - 60, "end"), (px + 60, py - 60, "start"), (px - 60, py + 80, "end"),
                  (px + 60, py + 80, "start"), (px + 40, py + 120, "end"), (px + 60, py + 150, "end")]
+        if ring and r["tag"] == "random_at_grape.k3":    # nhãn của vòng: ngay dưới vòng, đường dẫn ngắn
+            cands = [(px + 30, py + 62, "end"), (px - 30, py + 62, "end"), (px + 30, py + 62, "start")] + cands
         for cx, cy, anc in cands:
             bx = (cx if anc == "start" else cx - w, cy - 26, w, 34)
             if fits(bx) and not crosses(px, py, cx + (-6 if anc == "start" else 6), cy - 10):
@@ -762,8 +768,14 @@ def build_teacher_share(rows: Sequence[Mapping], lang: str = "en") -> str:
         boxes.append(bx)
     for r, cx, cy, anc in placed:                        # đường dẫn vẽ trước để nằm dưới chấm và chữ
         px, py = X(r["share"]), Y(r["acc"])
-        if abs(cx - px) > 26 or abs(cy - 10 - py) > 12:
-            s.line(px, py, cx + (-6 if anc == "start" else 6), cy - 10, LEAD_C, 2)
+        ex, ey = cx + (-6 if anc == "start" else 6), cy - 10
+        ring = any(o is not r and abs(X(o["share"]) - px) < 8 and abs(Y(o["acc"]) - py) < 8 for o in pts)
+        if ring and r["tag"] == "random_at_grape.k3":    # nhãn của vòng: đường dẫn dừng ở mép ngoài vòng cam
+            d = math.hypot(ex - px, ey - py) or 1.0
+            px, py = px + (ex - px) * 27 / d, py + (ey - py) * 27 / d
+            s.line(px, py, ex, ey, LEAD_C, 2)
+        elif ring or abs(cx - px) > 40 or abs(cy - 10 - py) > 12:   # điểm có vòng: luôn có đường dẫn vào tâm
+            s.line(px, py, ex, ey, LEAD_C, 2)
     drawn: list[tuple[float, float]] = []
     for r in pts:
         px, py = X(r["share"]), Y(r["acc"])

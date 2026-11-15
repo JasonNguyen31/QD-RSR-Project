@@ -11,7 +11,7 @@ teacher and the choice of solution within a teacher.
 
 | What | Where |
 | --- | --- |
-| This code, archived on Zenodo (the paper cites v1.0.4-paper) | https://doi.org/10.5281/zenodo.24126099 |
+| This code, archived on Zenodo (the paper cites v1.0.5-paper) | https://doi.org/10.5281/zenodo.24126099 |
 | Every generated solution, all scores, every selection, every evaluation sample | https://huggingface.co/datasets/VietNguyenHoang/fq-select-math-distillation |
 | 8-bit GGUF of the FQ-Select v2 student (seed 42) | https://huggingface.co/VietNguyenHoang/Llama-FQSelect-v2-Qwen2.5-1.5B-Q8_0-GGUF |
 | 8-bit GGUF of the GRAPE student (seed 42) | https://huggingface.co/VietNguyenHoang/Llama-GRAPE-Qwen2.5-1.5B-Q8_0-GGUF |
