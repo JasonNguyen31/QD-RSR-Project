@@ -33,7 +33,7 @@ def test_pipeline_text_fits_boxes_and_frames():
                 "evaluate", "GGUF"):
         assert mf.text_width(txt, mf.PIPE_L1, True) < w, txt
     for txt in ("questions", "× 3 samples", "solutions", "filtering", "judge + rules", "once per student",
-                "once per rule", "5,685 samples each", "6 benchmarks", "Ollama, LM Studio"):
+                "once per rule", "5,685 samples", "6 benchmarks", "Ollama, LM Studio"):
         assert mf.text_width(txt, mf.PIPE_L2) < w, txt
     head = lambda b, r: mf.text_width(b, mf.PIPE_HEAD, True) + 20 + mf.text_width(r, mf.PIPE_HEAD)
     assert head("Stage B:", "select and train") < 1160 - 25 - (35 + mf.PIPE_BOX_W * 1.5 + 120 + 40 + (

@@ -123,7 +123,7 @@ def save(svg_text: str, name: str, outdir: Path) -> list[Path]:
 
 # ================================================================ Hình 1: pipeline
 PIPE_BOX_W = 290           # bề rộng mỗi ô của Hình 1; bài kiểm thử đo chữ trong ô theo font thật của máy
-PIPE_L1, PIPE_L2, PIPE_HEAD = 36, 25, 32   # cỡ chữ dòng đầu, dòng hai của ô và tiêu đề Stage
+PIPE_L1, PIPE_L2, PIPE_HEAD = 38, 29, 32   # cỡ chữ dòng đầu, dòng hai của ô và tiêu đề Stage (tăng 15/11: chữ in ra nhỏ)
 
 
 def build_pipeline() -> str:
@@ -184,7 +184,7 @@ def build_pipeline() -> str:
     header(BX[1] + 40, top + 62, "Stage B:", "select and train")   # bên phải hai mũi tên đi vào Fam và bước chọn
     header(cx0 + pad_c, top + 62, "Stage C:", "evaluate and deploy")
     for cx, (a, b) in zip(BX, [("Fam(y|x)", "once per student"), ("select k = 3", "once per rule"),
-                               ("LoRA", "5,685 samples each")]):
+                               ("LoRA", "5,685 samples")]):
         box(cx, BY, PUR_BG, PUR, PUR_TX, a, b)
     for cx, (a, b) in zip(CX, [("evaluate", "6 benchmarks"), ("GGUF", "Ollama, LM Studio")]):
         box(cx, BY, GRN_BG, GRN, GRN_TX, a, b)
@@ -193,22 +193,22 @@ def build_pipeline() -> str:
     arrow(BX[2], CX[0], BY + BH / 2, PUR, "m-pur")       # adapter từ Stage B sang đánh giá; màu theo giai đoạn
                                                          # nguồn, như hai mũi tên xanh dương từ Stage A
     arrow(CX[0], CX[1], BY + BH / 2)
-    s.text((CX[0] + CX[1]) / 2, BY + BH + 70, "one adapter per student × rule × seed", 27, GRN_TX, "middle")
+    s.text((CX[0] + CX[1]) / 2, BY + BH + 70, "one adapter per student × rule × seed", 30, GRN_TX, "middle")
 
     # A -> B: hai nhánh, nhánh vào Fam đi cao hơn để hai đường không cắt nhau
     ya_bot, y1, y2 = AY + BH, 352, 410
     s.poly([(AX[3], ya_bot), (AX[3], y1), (BX[0], y1), (BX[0], BY - 4)], BLUE, "m-blue", width=3.6)
-    s.text((BX[0] + AX[3]) / 2, y1 - 12, "correct candidates, read by the student", 28, BLUE_TX, "middle")
+    s.text((BX[0] + AX[3]) / 2, y1 - 12, "correct candidates, read by the student", 30, BLUE_TX, "middle")
     s.poly([(AX[4], ya_bot), (AX[4], y2), (BX[1], y2), (BX[1], BY - 4)], BLUE, "m-blue", width=3.6)
-    s.text((BX[1] + AX[4]) / 2 + 120, y2 - 12, "cached Qual(y), reused by every rule", 28, BLUE_TX, "middle")
+    s.text((BX[1] + AX[4]) / 2 + 120, y2 - 12, "cached Qual(y), reused by every rule", 30, BLUE_TX, "middle")
 
     # vòng lặp trong Stage B: vòng trong về bước chọn (đổi phương án), vòng ngoài về Fam (đổi mô hình học)
     yb_bot = BY + BH
     ya, yb = yb_bot + 62, yb_bot + 128
     s.poly([(BX[2] - 40, yb_bot), (BX[2] - 40, ya), (BX[1], ya), (BX[1], yb_bot + 4)], PUR, "m-pur", True, 3.4)
-    s.text((BX[1] + BX[2] - 40) / 2, ya - 14, "next rule", 27, PUR_TX, "middle")
+    s.text((BX[1] + BX[2] - 40) / 2, ya - 14, "next rule", 30, PUR_TX, "middle")
     s.poly([(BX[2] + 40, yb_bot), (BX[2] + 40, yb), (BX[0], yb), (BX[0], yb_bot + 4)], PUR, "m-pur", True, 3.4)
-    s.text((BX[0] + BX[2]) / 2, yb + 34, "next student: recompute Fam", 27, PUR_TX, "middle")
+    s.text((BX[0] + BX[2]) / 2, yb + 34, "next student: recompute Fam", 30, PUR_TX, "middle")
     return s.render()
 
 
@@ -544,6 +544,7 @@ RESULT_SETS = {
     "fit_quality.k3": ("QD-RSR", "QD-RSR", "surprise"),
     "teacher_qwen_first.k3": ("Prefer Qwen", "Ưu tiên Qwen-72B", "teacher"),
     "teacher_qwen_last.k3": ("Avoid Qwen", "Tránh Qwen-72B", "teacher"),
+    "random_at_grape.k3": ("Random@GRAPE", "Random@GRAPE", "teacher"),   # thêm 15/11 theo phản biện vòng 2
 }
 # Tập in đậm là phương án đề xuất: hai bản FQ-Select (trước 20/10 là fit_quality.k3 của hướng QD-RSR cũ).
 OURS, BASE = ("fq_select.k3", "fq_veto_judge.k3"), "correct_only.k3"
@@ -748,8 +749,15 @@ def build_teacher_share(rows: Sequence[Mapping], lang: str = "en") -> str:
         px, py = X(r["share"]), Y(r["acc"])
         if abs(cx - px) > 26 or abs(cy - 10 - py) > 12:
             s.line(px, py, cx + (-6 if anc == "start" else 6), cy - 10, LEAD_C, 2)
+    drawn: list[tuple[float, float]] = []
     for r in pts:
-        dot(s, X(r["share"]), Y(r["acc"]), GROUP_COLOR[r["group"]], r["seeds"] >= 2)
+        px, py = X(r["share"]), Y(r["acc"])
+        if any(abs(px - ox) < 8 and abs(py - oy) < 8 for ox, oy in drawn):   # trùng điểm (Random@GRAPE và GRAPE):
+            s.add(f'<circle cx="{px:.1f}" cy="{py:.1f}" r="22" fill="none" '      # vẽ vòng ngoài để thấy cả hai
+                  f'stroke="{GROUP_COLOR[r["group"]]}" stroke-width="5"/>')
+        else:
+            dot(s, px, py, GROUP_COLOR[r["group"]], r["seeds"] >= 2)
+        drawn.append((px, py))
     for r, cx, cy, anc in placed:                        # nền trắng sau chữ để đường gạch Correct-Only không cắt nhãn
         w = text_width(r[lang], FS, r["tag"] in OURS)
         s.add(f'<rect x="{(cx if anc == "start" else cx - w) - 3:.1f}" y="{cy - 25:.1f}" width="{w + 6:.1f}" '

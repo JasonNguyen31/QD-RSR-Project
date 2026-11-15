@@ -27,9 +27,8 @@ judge:
   # Nguyên tắc thiết kế không đổi: giám khảo vẫn thuộc họ kiến trúc độc lập với cả ba mô hình dạy.
   provider: openrouter
   model_id:
-    google/gemini-2.5-flash-lite # [CẦN XÁC NHẬN] tên chính xác trên OpenRouter,
-    # kiểm tra bằng: python -m src.tools.test_api --judge-compare
-  compare_model_id: google/gemini-2.5-flash-lite # [CẦN XÁC NHẬN] bản rẻ hơn để so
+    google/gemini-2.5-flash-lite # tên trên OpenRouter, đã dùng để chấm cả kho (chốt 19/09/2026)
+  compare_model_id: google/gemini-2.5-flash-lite # bản dùng khi so các giám khảo
   api_key_env: GEMINI_API_KEY # chỉ dùng khi provider = gemini
   max_tokens:
     4000 # nâng dần 1500 -> 3000 -> 4000 ngày 19/09. Trên bài mức 5,
