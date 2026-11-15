@@ -713,6 +713,20 @@ def build_teacher_share(rows: Sequence[Mapping], lang: str = "en") -> str:
         return (x >= L + 4 and x + w <= L + pw and y >= T and y + h <= T + ph and
                 not any(x < ox + ow and ox < x + w and y < oy + oh and oy < y + h for ox, oy, ow, oh in boxes))
 
+    def crosses(px: float, py: float, ex: float, ey: float) -> bool:
+        """Đường dẫn từ điểm (px, py) tới nhãn có đi qua chấm của điểm khác không. Sửa 15/11: nhãn FQ-Select v1
+        từng có đường dẫn chạy xuyên chấm rỗng của FQ-Select v2, người đọc dễ hiểu nhầm nhãn thuộc chấm nào."""
+        dx, dy = ex - px, ey - py
+        n = dx * dx + dy * dy
+        for r in pts:
+            qx, qy = X(r["share"]), Y(r["acc"])
+            if abs(qx - px) < 8 and abs(qy - py) < 8:
+                continue                                  # chính điểm đó, hoặc điểm trùng tọa độ
+            t = 0.0 if n == 0 else max(0.0, min(1.0, ((qx - px) * dx + (qy - py) * dy) / n))
+            if (px + t * dx - qx) ** 2 + (py + t * dy - qy) ** 2 < 20 ** 2:
+                return True
+        return False
+
     placed = []
     gap = 40
     for lo_s, hi_s, col_x in ((-1.0, 15.0, X(10.5)), (15.0, 45.0, X(40.0))):
@@ -732,16 +746,17 @@ def build_teacher_share(rows: Sequence[Mapping], lang: str = "en") -> str:
             w = text_width(r[lang], FS, r["tag"] in OURS)
             placed.append((r, col_x, y, "start"))
             boxes.append((col_x, y - 26, w, 34))
-    for r in sorted([r for r in pts if r["share"] >= 45], key=lambda r: -r["acc"]):
+    # Random@GRAPE trùng tọa độ GRAPE nên xếp nhãn sau cùng, để các nhãn khác không phải nhường chỗ (sửa 15/11)
+    for r in sorted([r for r in pts if r["share"] >= 45], key=lambda r: (r["tag"] == "random_at_grape.k3", -r["acc"])):
         px, py = X(r["share"]), Y(r["acc"])
         w = text_width(r[lang], FS, r["tag"] in OURS)
         cands = [(px - 24, py + 10, "end"), (px + 24, py + 10, "start"), (px - 16, py - 26, "end"),
                  (px + 16, py - 26, "start"), (px - 16, py + 46, "end"), (px + 16, py + 46, "start"),
                  (px - 60, py - 60, "end"), (px + 60, py - 60, "start"), (px - 60, py + 80, "end"),
-                 (px + 60, py + 80, "start")]
+                 (px + 60, py + 80, "start"), (px + 40, py + 120, "end"), (px + 60, py + 150, "end")]
         for cx, cy, anc in cands:
             bx = (cx if anc == "start" else cx - w, cy - 26, w, 34)
-            if fits(bx):
+            if fits(bx) and not crosses(px, py, cx + (-6 if anc == "start" else 6), cy - 10):
                 break
         placed.append((r, cx, cy, anc))
         boxes.append(bx)
