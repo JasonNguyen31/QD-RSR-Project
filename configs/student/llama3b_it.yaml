@@ -1,0 +1,24 @@
+# Cổng của việc C (17/11/2026): Llama-3.2-3B-Instruct làm mô hình học, thay bản nền đã trượt cổng sàn 15%.
+# base_model_id trỏ tới bản Instruct vì b3_train và c1_evaluate nạp mô hình theo khoá này.
+# Thư mục kết quả là llama3b_it_base (đuôi _base do mã tự gắn, không có nghĩa là bản nền).
+student:
+  key: llama3b_it
+  model_id: meta-llama/Llama-3.2-3B-Instruct
+  base_model_id: meta-llama/Llama-3.2-3B-Instruct
+  params_b: 3.21
+  prompt_format: chat_template   # bản Instruct đã học khuôn hội thoại
+
+training:
+  method: qlora                  # như llama3b: QLoRA 4-bit, lô 1 x 16
+  load_in_4bit: true
+  batch_size: 1
+  grad_accum: 16
+  end_token: chat_template       # token kết thúc lượt của khuôn hội thoại, bản Instruct đã học
+
+signals:
+  skip_local_nat: true
+
+eval:
+  gen_batch: [32, 16, 8]
+
+methods: [correct_only, grape]

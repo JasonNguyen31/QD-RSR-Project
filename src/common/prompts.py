@@ -34,6 +34,9 @@ GEN_SEPARATOR = "\n\n"
 #                  bản nền mà các token đầu đề của khuôn hội thoại chưa được học (Llama-3). Gần định dạng gốc của GRAPE.
 # BOS phải nằm TRONG chuỗi vì mã mã hoá với add_special_tokens=False. Tokenizer không có BOS (Qwen) thì bỏ qua.
 PROMPT_FORMATS = ("chat_template", "plain")
+# Khuôn hội thoại của Llama-3.2 Instruct tự chèn "Today Date: <ngày chạy>" vào phần system. Cố định ngày bằng giá trị
+# mặc định của chính khuôn đó. Chỉ truyền khi khuôn có dùng date_string; khuôn khác (Qwen) được gọi y như trước.
+CHAT_DATE = "26 Jul 2024"
 _FORMAT_ATTR = "qdrsr_prompt_format"
 
 
@@ -55,7 +58,8 @@ def render_prompt(tok, question: str) -> str:
         bos = getattr(tok, "bos_token", None) or ""
         return f"{bos}{SYSTEM_PROMPT_TRAIN}\n\nQuestion: {question}\n\nAnswer:\n"
     messages = [{"role": "system", "content": SYSTEM_PROMPT_TRAIN}, {"role": "user", "content": question}]
-    return tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    extra = {"date_string": CHAT_DATE} if "date_string" in (getattr(tok, "chat_template", None) or "") else {}
+    return tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, **extra)
 
 
 def build_generation_messages(question: str, prompt_id: str = "rsr") -> list[dict]:
