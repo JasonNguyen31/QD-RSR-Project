@@ -18,6 +18,9 @@ authors:
   - family-names: Nguyen Le
     given-names: Ha-Vi
     affiliation: Ton Duc Thang University
+  - family-names: Le
+    given-names: Anh-Cuong
+    affiliation: Ton Duc Thang University
 license: MIT
 doi: "10.5281/zenodo.24126099"
 repository-code: "https://github.com/JasonNguyen31/QD-RSR-Project"
