@@ -1,7 +1,7 @@
 # FQ-Select: selecting reasoning traces by familiarity and quality
 
 Code for the paper *Selecting Reasoning Traces by Familiarity and Quality for Small Language Model Distillation*
-(Dinh-Hong Vu, Hoang-Viet Nguyen, Ha-Vi Nguyen Le; Ton Duc Thang University). The paper is under review.
+(Dinh-Hong Vu, Hoang-Viet Nguyen, Ha-Vi Nguyen-Le, Anh-Cuong Le; Ton Duc Thang University). The paper is under review.
 
 Three teachers (DeepSeek-V3, Qwen2.5-VL-72B-Instruct, Llama-3.3-70B-Instruct) write three solutions to each of 2,000
 GSM8K and MATH questions. A selection rule keeps three correct solutions per question, a Qwen2.5-1.5B base student is
@@ -11,7 +11,7 @@ teacher and the choice of solution within a teacher.
 
 | What | Where |
 | --- | --- |
-| This code, archived on Zenodo (the paper cites v1.0.7-paper) | https://doi.org/10.5281/zenodo.24126099 |
+| This code, archived on Zenodo (the paper cites v1.0.8-paper) | https://doi.org/10.5281/zenodo.24126099 |
 | Every generated solution, all scores, every selection, every evaluation sample | https://huggingface.co/datasets/VietNguyenHoang/fq-select-math-distillation |
 | 8-bit GGUF of the FQ-Select v2 student (seed 42) | https://huggingface.co/VietNguyenHoang/Llama-FQSelect-v2-Qwen2.5-1.5B-Q8_0-GGUF |
 | 8-bit GGUF of the GRAPE student (seed 42) | https://huggingface.co/VietNguyenHoang/Llama-GRAPE-Qwen2.5-1.5B-Q8_0-GGUF |
