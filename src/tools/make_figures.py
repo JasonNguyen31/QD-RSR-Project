@@ -545,6 +545,8 @@ RESULT_SETS = {
     "fit_quality.k3": ("QD-RSR", "QD-RSR", "surprise"),
     "teacher_qwen_first.k3": ("Prefer Qwen", "Ưu tiên Qwen-72B", "teacher"),
     "teacher_qwen_last.k3": ("Avoid Qwen", "Tránh Qwen-72B", "teacher"),
+    "teacher_deepseek_first.k3": ("Prefer DeepSeek", "Ưu tiên DeepSeek-V3", "teacher"),   # thêm 25/11 theo phản biện vòng 2
+    "teacher_llama_first.k3": ("Prefer Llama", "Ưu tiên Llama-3.3-70B", "teacher"),
     "random_at_grape.k3": ("Random@GRAPE", "Random@GRAPE", "teacher"),   # thêm 15/11 theo phản biện vòng 2
 }
 # Tập in đậm là phương án đề xuất: hai bản FQ-Select (trước 20/10 là fit_quality.k3 của hướng QD-RSR cũ).
