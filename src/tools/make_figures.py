@@ -492,7 +492,7 @@ REPORT_TEXT = {
            "distance": "Median embedding distance between two solutions of the same question", "median": "median",
            "same_cross": ["Same teacher", "Different teachers"],
            "corr": "Within-question rank correlation, {n} solutions",
-           "corr_sub": "every signal oriented so that higher means a better fit; RSR sign reversed", "length": "Length"},
+           "corr_sub": "each signal oriented so that higher means its own rule prefers the solution; RSR sign reversed", "length": "Length"},
 }
 
 
