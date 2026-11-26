@@ -389,6 +389,30 @@ def vn(v: float, dec: str = ",") -> str:
     return f"{v:g}".replace(".", dec)
 
 
+def nice_ticks(vmax: float) -> list[float]:
+    """Vạch chia tròn số (bước 1, 2, 2,5 hay 5 nhân lũy thừa của 10), 3 tới 6 vạch, vạch cuối không nhỏ hơn vmax.
+    Thêm 27/11: trước đây chia vmax làm đôi nên trục ra số lẻ như 10,7% hay 1410,5."""
+    import math
+    if vmax <= 0:
+        return [0.0, 1.0]
+    for k in range(int(math.floor(math.log10(vmax))) - 1, int(math.floor(math.log10(vmax))) + 2):
+        for m in (1, 2, 2.5, 5):
+            step = m * 10 ** k
+            n = math.ceil(vmax / step - 1e-9)
+            if 2 <= n <= 5:
+                return [round(i * step, 10) for i in range(n + 1)]
+    return [0.0, vmax]
+
+
+def wrap_label(txt: str, width: float, size: float) -> list[str]:
+    """Nhãn dài hơn chỗ của nó thì xuống hai dòng ở khoảng trắng gần giữa nhất."""
+    if text_width(txt, size) <= width or " " not in txt:
+        return [txt]
+    cuts = [i for i, c in enumerate(txt) if c == " "]
+    i = min(cuts, key=lambda c: abs(c - len(txt) / 2))
+    return [txt[:i], txt[i + 1:]]
+
+
 def grouped_bars(title: str, groups: Sequence[str], series: Sequence[tuple[str, str, Sequence[float]]],
                  vmax: float, unit: str = "%", w: int = 1500, h: int = 900, dec: str = ",") -> str:
     """Biểu đồ cột nhóm. series là danh sách (tên, màu, giá trị theo từng nhóm)."""
@@ -398,9 +422,13 @@ def grouped_bars(title: str, groups: Sequence[str], series: Sequence[tuple[str, 
     s.text(left, 58, title, size=34, color=DIM)
     s.line(left, top + plot_h, w - right, top + plot_h, GREY, 3)
     s.line(left, top, left, top + plot_h, GREY, 3)
-    for frac in (0.0, 0.5, 1.0):                      # ba vạch chia là đủ, nhiều hơn thì rối
-        y = top + plot_h - frac * plot_h
-        s.text(left - 20, y + 11, vn(round(vmax * frac, 3), dec) + unit, size=28, color=GREY, anchor="end")
+    ticks = nice_ticks(vmax)
+    vmax = ticks[-1]
+    for v in ticks:
+        y = top + plot_h - v / vmax * plot_h
+        if v:
+            s.line(left, y, w - right, y, GRID_C, 2)
+        s.text(left - 20, y + 11, vn(v, dec) + unit, size=28, color=GREY, anchor="end")
     gw = plot_w / len(groups)
     bw = min(96, gw / (len(series) + 1.4))
     for gi, g in enumerate(groups):
@@ -413,7 +441,8 @@ def grouped_bars(title: str, groups: Sequence[str], series: Sequence[tuple[str, 
             s.add(f'<rect x="{x:.1f}" y="{top + plot_h - bh:.1f}" width="{bw - 8:.1f}" height="{bh:.1f}" '
                   f'fill="{color}" rx="4"/>')
             s.text(x + (bw - 8) / 2, top + plot_h - bh - 16, vn(v, dec), size=26, color=INK, anchor="middle")
-        s.text(cx, top + plot_h + 48, g, size=30, color=DIM, anchor="middle")
+        for li, part in enumerate(wrap_label(g, gw - 16, 30)):
+            s.text(cx, top + plot_h + 48 + 36 * li, part, size=30, color=DIM, anchor="middle")
     lx = left
     for name, color, _ in series:
         s.add(f'<rect x="{lx}" y="{h - 78}" width="30" height="30" fill="{color}" rx="4"/>')
@@ -446,7 +475,7 @@ REPORT_TEXT = {
            "teachers": "Tỷ lệ chuỗi đúng theo mô hình dạy và mức độ khó",
            "truncation": "Tỷ lệ chuỗi bị cắt theo mô hình dạy và mức độ khó",
            "lengths": "Độ dài chuỗi đúng theo mô hình dạy, số token", "pct": ["trung vị", "p75", "p90", "p99"],
-           "judge": "Phân bố điểm giám khảo trên {n} chuỗi", "judge_corr": "Tương quan hạng giữa hai nửa của điểm chất lượng",
+           "judge": "Phân bố điểm giám khảo trên {n} chuỗi", "ceiling": "cột xanh: điểm từ 0,9 trở lên, {p} số chuỗi", "judge_corr": "Tương quan hạng giữa hai nửa của điểm chất lượng",
            "pairs": ["điểm quy tắc và điểm giám khảo", "điểm quy tắc và số từ", "điểm giám khảo và số từ"],
            "distance": "Khoảng cách biểu diễn trung vị giữa hai chuỗi của cùng một câu hỏi", "median": "trung vị",
            "same_cross": ["Cùng mô hình", "Khác mô hình"],
@@ -457,6 +486,7 @@ REPORT_TEXT = {
            "truncation": "Share of truncated solutions by teacher and difficulty",
            "lengths": "Length of correct solutions by teacher, in tokens", "pct": ["median", "p75", "p90", "p99"],
            "judge": "Distribution of judge scores over {n} solutions",
+           "ceiling": "blue bars: scores of 0.9 or higher, {p} of all solutions",
            "judge_corr": "Rank correlation between the two halves of the quality score",
            "pairs": ["rule score and judge score", "rule score and word count", "judge score and word count"],
            "distance": "Median embedding distance between two solutions of the same question", "median": "median",
@@ -539,8 +569,10 @@ def build_judge(cfg, workdir: str, lang: str = "vi") -> str:
     words = [r["n_words"] for r in rows]
 
     s = Svg(1500, 980)                                   # đủ chỗ cho ba dòng tương quan bên dưới
-    left, top, plot_w, plot_h = 170, 120, 1270, 560
+    left, top, plot_w, plot_h = 170, 150, 1270, 530
     s.text(left, 60, t["judge"].format(n=count_text(len(rows), lang)), size=34, color=DIM)
+    high = sum(v for b, v in zip(bins, vals) if b >= 0.9) / max(sum(vals), 1)
+    s.text(left, 100, t["ceiling"].format(p=num(100 * high, t["dec"], 1) + "%"), size=26, color=GREY)
     s.line(left, top + plot_h, left + plot_w, top + plot_h, GREY, 3)
     s.line(left, top, left, top + plot_h, GREY, 3)
     vmax = max(vals)
@@ -548,7 +580,7 @@ def build_judge(cfg, workdir: str, lang: str = "vi") -> str:
     for i, (b, v) in enumerate(zip(bins, vals)):
         bh = plot_h * v / vmax
         x = left + i * bw + 10
-        color = BLUE if b >= 0.9 else GREY
+        color = BLUE if b >= 0.9 else GREY             # tô xanh hai cột trần điểm
         s.add(f'<rect x="{x:.1f}" y="{top + plot_h - bh:.1f}" width="{bw - 20:.1f}" height="{bh:.1f}" '
               f'fill="{color}" rx="4"/>')
         if v:
@@ -560,7 +592,7 @@ def build_judge(cfg, workdir: str, lang: str = "vi") -> str:
     s.text(left, y, t["judge_corr"], size=32, color=INK, weight="600")
     for i, (name, a, b) in enumerate(zip(t["pairs"], [rule, rule, llm], [llm, words, words])):
         r = spearman(a, b)
-        s.text(left, y + 52 + i * 46, f"{name}: " + f"{r:+.2f}".replace(".", t["dec"]), size=30, color=DIM)
+        s.text(left, y + 52 + i * 46, f"{name}: " + num(r, t["dec"], 2, sign=True), size=30, color=DIM)
     return s.render()
 
 
@@ -618,7 +650,7 @@ def build_correlation(cfg, workdir: str, fit_file: str, lang: str = "vi") -> str
             s.add(f'<rect x="{pad + cell * j}" y="{pad + cell * i}" width="{cell - 10}" height="{cell - 10}" '
                   f'fill="{fill}" rx="6"/>')
             s.text(pad + cell * j + (cell - 10) / 2, pad + cell * i + cell / 2 + 10,
-                   f"{v:+.2f}".replace(".", tx["dec"]), size=32, anchor="middle",
+                   num(v, tx["dec"], 2, sign=True), size=32, anchor="middle",
                    color="#ffffff" if t > 0.55 else INK)
     return s.render()
 
