@@ -29,6 +29,13 @@ Hình cho BÁO CÁO ĐỒ ÁN (Notion mục T4), đọc thẳng từ dữ liệu
     A-8  distance      Khoảng cách biểu diễn: cùng và khác mô hình dạy, và theo mức độ khó
     B-1  correlation   Ma trận tương quan giữa bốn tín hiệu nội tại và độ dài
 
+Bản TIẾNG ANH cho báo cáo đồ án viết tiếng Anh (thêm 27/11). Hình báo cáo chạy trên máy có dữ liệu Giai đoạn A
+(labels.jsonl, trajectories, quality.jsonl, embed_probe.json); hình kết quả chạy trên máy có kết quả đánh giá:
+
+    python -m src.tools.make_figures report_en                         A-2..A-8, B-1, tên file có hậu tố _en
+    python -m src.tools.make_figures results_en                        forest_en (figC1_forest), teacher_mix (figC4)
+    C-4  teacher_mix   Tỷ lệ ba mô hình dạy trong tập mỗi quy tắc chọn, cột chồng nằm ngang
+
 Cần thư viện hệ thống cairo để xuất file:
     conda install -c conda-forge cairo      (hoặc: brew install cairo)
     pip install cairosvg
@@ -213,6 +220,73 @@ def build_pipeline() -> str:
     return s.render()
 
 
+FOREST_TEXT = {
+    "vi": {"x": "Chênh lệch Acc@4 trên MATH-500 so với Correct-Only (điểm %)",
+           "dot": "chấm: chênh lệch; đoạn ngang: khoảng tin cậy 95%",
+           "zero": "Đoạn ngang không cắt vạch 0 nghĩa là chênh lệch đó lớn hơn mức nhiễu của tập câu hỏi."},
+    "en": {"x": "MATH-500 Acc@4 difference from Correct-Only (points)",
+           "dot": "dot: difference; bar: 95% interval",
+           "zero": "A bar that does not cross zero marks a difference larger than the noise of the question set."},
+}
+
+
+# ================================================================ C-4: tỷ lệ ba mô hình dạy trong tập chọn (thêm 27/11)
+MIX_TEACHERS = [("qwen72b", "Qwen2.5-VL-72B", PUR), ("deepseek", "DeepSeek-V3", BLUE), ("llama70b", "Llama-3.3-70B", GRN)]
+MIX_TEXT = {"en": {"x": "Share of the training set (%)", "title": "Teacher shares of the set each rule selects"},
+            "vi": {"x": "Tỷ lệ trong tập huấn luyện (%)", "title": "Tỷ lệ ba mô hình dạy trong tập mỗi quy tắc chọn"}}
+
+
+def teacher_mix_rows(seldir: Path) -> list[dict]:
+    """Một dòng cho mỗi quy tắc trong RESULT_SETS có select.<tên>.json: tỷ lệ ba mô hình dạy (%), theo
+    teacher_share do b2_select ghi. Không cần kết quả đánh giá, nên vẽ được cả khi chưa huấn luyện."""
+    rows = []
+    for tag, (en, vi, group) in RESULT_SETS.items():
+        sel = seldir / f"select.{tag}.json"
+        if not sel.exists():
+            continue
+        share = json.loads(sel.read_text(encoding="utf-8")).get("teacher_share", {})
+        rows.append({"tag": tag, "en": en, "vi": vi, "group": group,
+                     **{k: 100 * float(share.get(k, 0.0)) for k, _, _ in MIX_TEACHERS}})
+    if not rows:
+        raise SystemExit(f"Không thấy select.*.json nào trong {seldir}.")
+    return rows
+
+
+def build_teacher_mix(rows: Sequence[Mapping], lang: str = "en") -> str:
+    """Cột chồng nằm ngang: mỗi quy tắc một dòng, ba đoạn là tỷ lệ Qwen2.5-72B, DeepSeek-V3, Llama-3.3-70B trong
+    tập nó chọn. Xếp theo tỷ lệ Qwen giảm dần, để thấy ngay quy tắc nào dồn vào teacher cùng họ với mô hình học."""
+    t = MIX_TEXT[lang]
+    dec = "." if lang == "en" else ","
+    rs = sorted(rows, key=lambda r: -r["qwen72b"])
+    W, row_h, L, R, T = 1500, 54, 430, 40, 70
+    ph = row_h * len(rs)
+    H = T + ph + 170
+    pw = W - L - R
+    s = Svg(W, H)
+    s.text(L, 46, t["title"], 32, DIM)
+    for v in range(0, 101, 20):
+        x = L + pw * v / 100
+        s.line(x, T, x, T + ph, GRID_C, 2)
+        s.text(x, T + ph + 40, str(v), 28, DIM, "middle")
+    s.text(L + pw / 2, T + ph + 86, t["x"], 30, INK, "middle")
+    for i, r in enumerate(rs):
+        y = T + row_h * i + 7
+        s.text(L - 20, y + row_h / 2 + 2, r[lang], 28, INK, "end", "700" if r["tag"] in OURS else "400")
+        x = L
+        for k, _, color in MIX_TEACHERS:
+            w = pw * r[k] / 100
+            s.add(f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{row_h - 14}" fill="{color}"/>')
+            if r[k] >= 8:
+                s.text(x + w / 2, y + row_h / 2 + 2, f"{r[k]:.0f}", 24, "#ffffff", "middle")
+            x += w
+    lx = L
+    for _, name, color in MIX_TEACHERS:
+        swatch(s, lx, H - 20, color)
+        s.text(lx + 48, H - 20, name, 28, DIM)
+        lx += 48 + text_width(name, 28) + 60
+    return s.render()
+
+
 # ================================================================ Hình 2: phân bố số chuỗi đúng
 GROUP_STYLE = {           # nhãn hiển thị và màu, theo thứ tự dễ tới khó
     "gsm8k":   ("GSM8K", GREY),
@@ -310,13 +384,13 @@ def build_distribution(stats: Mapping, lang: str = "en") -> str:
 
 
 # ================================================================ dụng cụ cho biểu đồ cột
-def vn(v: float) -> str:
-    """Số theo cách viết tiếng Việt: dấu phẩy thập phân."""
-    return f"{v:g}".replace(".", ",")
+def vn(v: float, dec: str = ",") -> str:
+    """Số in trên biểu đồ cột: dấu phẩy thập phân (tiếng Việt) hoặc dấu chấm (tiếng Anh, thêm 27/11)."""
+    return f"{v:g}".replace(".", dec)
 
 
 def grouped_bars(title: str, groups: Sequence[str], series: Sequence[tuple[str, str, Sequence[float]]],
-                 vmax: float, unit: str = "%", w: int = 1500, h: int = 900) -> str:
+                 vmax: float, unit: str = "%", w: int = 1500, h: int = 900, dec: str = ",") -> str:
     """Biểu đồ cột nhóm. series là danh sách (tên, màu, giá trị theo từng nhóm)."""
     s = Svg(w, h)
     left, right, top, bottom = 150, 60, 110, 190
@@ -326,7 +400,7 @@ def grouped_bars(title: str, groups: Sequence[str], series: Sequence[tuple[str, 
     s.line(left, top, left, top + plot_h, GREY, 3)
     for frac in (0.0, 0.5, 1.0):                      # ba vạch chia là đủ, nhiều hơn thì rối
         y = top + plot_h - frac * plot_h
-        s.text(left - 20, y + 11, vn(round(vmax * frac, 3)) + unit, size=28, color=GREY, anchor="end")
+        s.text(left - 20, y + 11, vn(round(vmax * frac, 3), dec) + unit, size=28, color=GREY, anchor="end")
     gw = plot_w / len(groups)
     bw = min(96, gw / (len(series) + 1.4))
     for gi, g in enumerate(groups):
@@ -338,7 +412,7 @@ def grouped_bars(title: str, groups: Sequence[str], series: Sequence[tuple[str, 
             x = x0 + si * bw
             s.add(f'<rect x="{x:.1f}" y="{top + plot_h - bh:.1f}" width="{bw - 8:.1f}" height="{bh:.1f}" '
                   f'fill="{color}" rx="4"/>')
-            s.text(x + (bw - 8) / 2, top + plot_h - bh - 16, vn(v), size=26, color=INK, anchor="middle")
+            s.text(x + (bw - 8) / 2, top + plot_h - bh - 16, vn(v, dec), size=26, color=INK, anchor="middle")
         s.text(cx, top + plot_h + 48, g, size=30, color=DIM, anchor="middle")
     lx = left
     for name, color, _ in series:
@@ -367,10 +441,38 @@ TEACHER_COLORS = [(GRN, "Llama-3.3-70B", "llama70b"), (BLUE, "DeepSeek-V3", "dee
                   (PUR, "Qwen2.5-VL-72B", "qwen72b")]
 GROUPS = ["gsm8k", "math-L3", "math-L4", "math-L5"]
 GROUP_LABELS = ["GSM8K", "MATH mức 3", "MATH mức 4", "MATH mức 5"]
+REPORT_TEXT = {
+    "vi": {"groups": GROUP_LABELS, "dec": ",",
+           "teachers": "Tỷ lệ chuỗi đúng theo mô hình dạy và mức độ khó",
+           "truncation": "Tỷ lệ chuỗi bị cắt theo mô hình dạy và mức độ khó",
+           "lengths": "Độ dài chuỗi đúng theo mô hình dạy, số token", "pct": ["trung vị", "p75", "p90", "p99"],
+           "judge": "Phân bố điểm giám khảo trên {n} chuỗi", "judge_corr": "Tương quan hạng giữa hai nửa của điểm chất lượng",
+           "pairs": ["điểm quy tắc và điểm giám khảo", "điểm quy tắc và số từ", "điểm giám khảo và số từ"],
+           "distance": "Khoảng cách biểu diễn trung vị giữa hai chuỗi của cùng một câu hỏi", "median": "trung vị",
+           "same_cross": ["Cùng mô hình", "Khác mô hình"],
+           "corr": "Tương quan hạng trong từng câu hỏi, {n} chuỗi",
+           "corr_sub": "mọi tín hiệu đã đưa về hướng càng cao càng phù hợp, RSR đã đảo dấu", "length": "Độ dài"},
+    "en": {"groups": ["GSM8K", "MATH level 3", "MATH level 4", "MATH level 5"], "dec": ".",
+           "teachers": "Share of correct solutions by teacher and difficulty",
+           "truncation": "Share of truncated solutions by teacher and difficulty",
+           "lengths": "Length of correct solutions by teacher, in tokens", "pct": ["median", "p75", "p90", "p99"],
+           "judge": "Distribution of judge scores over {n} solutions",
+           "judge_corr": "Rank correlation between the two halves of the quality score",
+           "pairs": ["rule score and judge score", "rule score and word count", "judge score and word count"],
+           "distance": "Median embedding distance between two solutions of the same question", "median": "median",
+           "same_cross": ["Same teacher", "Different teachers"],
+           "corr": "Within-question rank correlation, {n} solutions",
+           "corr_sub": "every signal oriented so that higher means a better fit; RSR sign reversed", "length": "Length"},
+}
+
+
+def count_text(n: int, lang: str) -> str:
+    """Số nguyên có dấu tách hàng nghìn: 14.927 (tiếng Việt), 14,927 (tiếng Anh)."""
+    return f"{n:,}" if lang == "en" else f"{n:,}".replace(",", ".")
 
 
 # ================================================================ Hình A-2: tỷ lệ đúng theo mô hình dạy
-def build_teachers(cfg, workdir: str) -> str:
+def build_teachers(cfg, workdir: str, lang: str = "vi") -> str:
     labels, questions = load_labels(cfg, workdir)
     tot: dict = defaultdict(int)
     ok: dict = defaultdict(int)
@@ -380,11 +482,12 @@ def build_teachers(cfg, workdir: str) -> str:
         ok[key] += bool(l["correct"])
     series = [(name, color, [round(100 * ok[(t, g)] / max(tot[(t, g)], 1), 1) for g in GROUPS])
               for color, name, t in TEACHER_COLORS]
-    return grouped_bars("Tỷ lệ chuỗi đúng theo mô hình dạy và mức độ khó", GROUP_LABELS, series, 100.0)
+    t = REPORT_TEXT[lang]
+    return grouped_bars(t["teachers"], t["groups"], series, 100.0, dec=t["dec"])
 
 
 # ================================================================ Hình A-3: tỷ lệ chuỗi bị cắt
-def build_truncation(cfg, workdir: str) -> str:
+def build_truncation(cfg, workdir: str, lang: str = "vi") -> str:
     labels, questions = load_labels(cfg, workdir)
     tot: dict = defaultdict(int)
     cut: dict = defaultdict(int)
@@ -395,11 +498,12 @@ def build_truncation(cfg, workdir: str) -> str:
     series = [(name, color, [round(100 * cut[(t, g)] / max(tot[(t, g)], 1), 1) for g in GROUPS])
               for color, name, t in TEACHER_COLORS]
     vmax = max(max(v for _, _, vals in series for v in vals), 5.0)
-    return grouped_bars("Tỷ lệ chuỗi bị cắt theo mô hình dạy và mức độ khó", GROUP_LABELS, series, vmax)
+    t = REPORT_TEXT[lang]
+    return grouped_bars(t["truncation"], t["groups"], series, vmax, dec=t["dec"])
 
 
 # ================================================================ Hình A-4: độ dài chuỗi đúng
-def build_lengths(cfg, workdir: str) -> str:
+def build_lengths(cfg, workdir: str, lang: str = "vi") -> str:
     from src.stage_a.a2_generate import all_trajectory_files
     wd = resolve_path(cfg, workdir)
     files = cfg["stage_a_files"]
@@ -415,12 +519,13 @@ def build_lengths(cfg, workdir: str) -> str:
     series = [(name, color, [round(v) for v in percentiles(by_t.get(t, []), ps)])
               for color, name, t in TEACHER_COLORS]
     vmax = max(v for _, _, vals in series for v in vals)
-    return grouped_bars("Độ dài chuỗi đúng theo mô hình dạy, số token",
-                        ["trung vị", "p75", "p90", "p99"], series, vmax, unit="")
+    t = REPORT_TEXT[lang]
+    return grouped_bars(t["lengths"], t["pct"], series, vmax, unit="", dec=t["dec"])
 
 
 # ================================================================ Hình A-6: phân bố điểm giám khảo
-def build_judge(cfg, workdir: str) -> str:
+def build_judge(cfg, workdir: str, lang: str = "vi") -> str:
+    t = REPORT_TEXT[lang]
     wd = resolve_path(cfg, workdir)
     rows = [r for r in read_jsonl(wd / "quality.jsonl") if r.get("llm_score") is not None]
     if not rows:
@@ -435,7 +540,7 @@ def build_judge(cfg, workdir: str) -> str:
 
     s = Svg(1500, 980)                                   # đủ chỗ cho ba dòng tương quan bên dưới
     left, top, plot_w, plot_h = 170, 120, 1270, 560
-    s.text(left, 60, f"Phân bố điểm giám khảo trên {len(rows):,} chuỗi".replace(",", "."), size=34, color=DIM)
+    s.text(left, 60, t["judge"].format(n=count_text(len(rows), lang)), size=34, color=DIM)
     s.line(left, top + plot_h, left + plot_w, top + plot_h, GREY, 3)
     s.line(left, top, left, top + plot_h, GREY, 3)
     vmax = max(vals)
@@ -447,21 +552,21 @@ def build_judge(cfg, workdir: str) -> str:
         s.add(f'<rect x="{x:.1f}" y="{top + plot_h - bh:.1f}" width="{bw - 20:.1f}" height="{bh:.1f}" '
               f'fill="{color}" rx="4"/>')
         if v:
-            s.text(x + (bw - 20) / 2, top + plot_h - bh - 14, f"{v:,}".replace(",", "."),
+            s.text(x + (bw - 20) / 2, top + plot_h - bh - 14, count_text(v, lang),
                    size=24, color=INK, anchor="middle")
-        s.text(x + (bw - 20) / 2, top + plot_h + 44, f"{b:.1f}".replace(".", ","), size=28, color=DIM, anchor="middle")
+        s.text(x + (bw - 20) / 2, top + plot_h + 44, f"{b:.1f}".replace(".", t["dec"]), size=28, color=DIM,
+               anchor="middle")
     y = top + plot_h + 120
-    s.text(left, y, "Tương quan hạng giữa hai nửa của điểm chất lượng", size=32, color=INK, weight="600")
-    for i, (name, a, b) in enumerate([("điểm quy tắc và điểm giám khảo", rule, llm),
-                                      ("điểm quy tắc và số từ", rule, words),
-                                      ("điểm giám khảo và số từ", llm, words)]):
+    s.text(left, y, t["judge_corr"], size=32, color=INK, weight="600")
+    for i, (name, a, b) in enumerate(zip(t["pairs"], [rule, rule, llm], [llm, words, words])):
         r = spearman(a, b)
-        s.text(left, y + 52 + i * 46, f"{name}: {r:+.2f}".replace(".", ","), size=30, color=DIM)
+        s.text(left, y + 52 + i * 46, f"{name}: " + f"{r:+.2f}".replace(".", t["dec"]), size=30, color=DIM)
     return s.render()
 
 
 # ================================================================ Hình A-8: khoảng cách biểu diễn
-def build_distance(cfg, workdir: str) -> str:
+def build_distance(cfg, workdir: str, lang: str = "vi") -> str:
+    t = REPORT_TEXT[lang]
     wd = resolve_path(cfg, workdir)
     probe = json.loads((wd / "embed_probe.json").read_text(encoding="utf-8"))
     # a5_embed ghi hai khoá within_teacher và across_teacher; hai tên cũ chỉ giữ để đọc file probe đời trước
@@ -472,17 +577,16 @@ def build_distance(cfg, workdir: str) -> str:
     by_group = probe.get("by_group", {})
     if not by_group:
         raise SystemExit("embed_probe.json chưa có phần by_group. Chạy: a5_embed --probe --reuse")
-    series = [("trung vị", BLUE, [round(same.get("median", 0), 3), round(cross.get("median", 0), 3)]
+    series = [(t["median"], BLUE, [round(same.get("median", 0), 3), round(cross.get("median", 0), 3)]
                + [round(by_group[g]["median"], 3) for g in GROUPS if g in by_group])]
-    groups = ["Cùng mô hình", "Khác mô hình"] + [GROUP_LABELS[GROUPS.index(g)] for g in GROUPS
-                                                          if g in by_group]
+    groups = t["same_cross"] + [t["groups"][GROUPS.index(g)] for g in GROUPS if g in by_group]
     vmax = max(series[0][2]) * 1.25
-    return grouped_bars("Khoảng cách biểu diễn trung vị giữa hai chuỗi của cùng một câu hỏi",
-                        groups, series, vmax, unit="")
+    return grouped_bars(t["distance"], groups, series, vmax, unit="", dec=t["dec"])
 
 
 # ================================================================ Hình B-1: ma trận tương quan
-def build_correlation(cfg, workdir: str, fit_file: str) -> str:
+def build_correlation(cfg, workdir: str, fit_file: str, lang: str = "vi") -> str:
+    tx = REPORT_TEXT[lang]
     from src.stage_b.signals import prepare_fit_rows
     from src.tools.compare_fit import SIGNALS, signal_matrix
     wd = resolve_path(cfg, workdir)
@@ -494,13 +598,12 @@ def build_correlation(cfg, workdir: str, fit_file: str) -> str:
                          f"Chạy lại b1_fit rồi mới vẽ Hình B-1.")
     names = [n for n in SIGNALS if n in rows[0]]
     m = signal_matrix(rows, names)
-    show = {"rsr": "RSR", "grape": "GRAPE", "local_nat": "LocalNat", "lark": "LARK", "n_tokens": "Độ dài"}
+    show = {"rsr": "RSR", "grape": "GRAPE", "local_nat": "LocalNat", "lark": "LARK", "n_tokens": tx["length"]}
 
     cell, pad = 190, 230
     s = Svg(pad + cell * len(names) + 60, pad + cell * len(names) + 140)
-    s.text(60, 70, f"Tương quan hạng trong từng câu hỏi, {len(rows):,} chuỗi".replace(",", "."),
-           size=34, color=DIM)
-    s.text(60, 118, "mọi tín hiệu đã đưa về hướng càng cao càng phù hợp, RSR đã đảo dấu", size=28, color=GREY)
+    s.text(60, 70, tx["corr"].format(n=count_text(len(rows), lang)), size=34, color=DIM)
+    s.text(60, 118, tx["corr_sub"], size=28, color=GREY)
     for j, y in enumerate(names):
         s.text(pad + cell * j + cell / 2, pad - 24, show[y], size=30, color=DIM, anchor="middle")
         s.text(pad - 24, pad + cell * j + cell / 2 + 10, show[y], size=30, color=DIM, anchor="end")
@@ -515,7 +618,7 @@ def build_correlation(cfg, workdir: str, fit_file: str) -> str:
             s.add(f'<rect x="{pad + cell * j}" y="{pad + cell * i}" width="{cell - 10}" height="{cell - 10}" '
                   f'fill="{fill}" rx="6"/>')
             s.text(pad + cell * j + (cell - 10) / 2, pad + cell * i + cell / 2 + 10,
-                   f"{v:+.2f}".replace(".", ","), size=32, anchor="middle",
+                   f"{v:+.2f}".replace(".", tx["dec"]), size=32, anchor="middle",
                    color="#ffffff" if t > 0.55 else INK)
     return s.render()
 
@@ -552,6 +655,7 @@ RESULT_SETS = {
 # Tập in đậm là phương án đề xuất: hai bản FQ-Select (trước 20/10 là fit_quality.k3 của hướng QD-RSR cũ).
 OURS, BASE = ("fq_select.k3", "fq_veto_judge.k3"), "correct_only.k3"
 GROUP_ORDER = ["student", "surprise", "teacher", "free"]
+GROUP_ORDER = ["student", "surprise", "teacher", "free"]                # cùng thứ tự với RESULT_TEXT[...]["groups"]
 GROUP_COLOR = {"student": C_STUDENT, "surprise": C_SURPRISE, "teacher": C_TEACHER, "free": C_FREE}
 RESULT_TEXT = {
     "en": {"x": "Share of Qwen2.5-72B solutions in the training set (%)", "y": "MATH-500 Acc@4 (%)",
@@ -795,10 +899,11 @@ def build_teacher_share(rows: Sequence[Mapping], lang: str = "en") -> str:
     return s.render()
 
 
-def build_forest(rows: Sequence[Mapping]) -> str:
+def build_forest(rows: Sequence[Mapping], lang: str = "vi") -> str:
     """Chênh lệch Acc@4 trên MATH-500 so với Correct-Only, mỗi dòng một tập: chấm là chênh lệch, đoạn ngang là
     khoảng tin cậy 95% ghép cặp theo câu hỏi. Chú giải nói rõ ký hiệu và cách đọc vạch 0 (bản tiếng Việt)."""
-    t = RESULT_TEXT["vi"]
+    t = RESULT_TEXT[lang]
+    f = FOREST_TEXT[lang]
     rs = sorted([r for r in rows if r.get("diff") is not None], key=lambda r: -r["diff"])
     if not rs:
         raise SystemExit("Không có chênh lệch nào để vẽ.")
@@ -816,26 +921,26 @@ def build_forest(rows: Sequence[Mapping]) -> str:
     v = lo + (-lo) % step
     while v <= hi:
         s.line(X(v), T, X(v), T + ph, GRID_C, 2)
-        s.text(X(v), T + ph + 42, num(round(v, 6), ","), 28, DIM, "middle")
+        s.text(X(v), T + ph + 42, num(round(v, 6), t["dec"]), 28, DIM, "middle")
         v += step
     s.line(X(0), T - 8, X(0), T + ph, GREY, 3)
     s.line(L, T + ph, W - R, T + ph, GREY, 3)
-    s.text((L + W - R) / 2, T + ph + 92, "Chênh lệch Acc@4 trên MATH-500 so với Correct-Only (điểm %)", 30, INK,
-           "middle")
+    s.text((L + W - R) / 2, T + ph + 92, f["x"], 30, INK, "middle")
     for i, r in enumerate(rs):
         y = T + row_h * (i + 0.5)
         c = GROUP_COLOR[r["group"]]
-        s.text(L - 28, y + 10, r["vi"], 28, INK, "end", "700" if r["tag"] in OURS else "400")
+        s.text(L - 28, y + 10, r[lang], 28, INK, "end", "700" if r["tag"] in OURS else "400")
         s.add(f'<line x1="{X(r["lo"]):.1f}" y1="{y:.1f}" x2="{X(r["hi"]):.1f}" y2="{y:.1f}" stroke="{c}" '
               f'stroke-width="7" stroke-linecap="round"/>')
         dot(s, X(r["diff"]), y, c, r["seeds"] >= 2, 12)
         if r["diff"] < 0:                                # số đặt phía ngoài đoạn ngang, không đè lên vạch 0
-            s.text(X(r["lo"]) - 16, y + 10, num(r["diff"], ",", 1, sign=True), 27, INK, "end")
+            s.text(X(r["lo"]) - 16, y + 10, num(r["diff"], t["dec"], 1, sign=True), 27, INK, "end")
         else:
-            s.text(X(r["hi"]) + 16, y + 10, num(r["diff"], ",", 1, sign=True), 27, INK)
+            s.text(X(r["hi"]) + 16, y + 10, num(r["diff"], t["dec"], 1, sign=True), 27, INK)
     ly = T + ph + 160
     x = 60
-    for g, lab in zip(["student", "teacher", "free"], t["groups"]):
+    for g in [g for g in GROUP_ORDER if any(r["group"] == g for r in rs)]:
+        lab = t["groups"][GROUP_ORDER.index(g)]
         swatch(s, x, ly, GROUP_COLOR[g])
         s.text(x + 48, ly, lab, 25, DIM)
         x += 48 + text_width(lab, 25) + 50
@@ -849,13 +954,20 @@ def build_forest(rows: Sequence[Mapping]) -> str:
     s.add(f'<line x1="{x}" y1="{ly - 9}" x2="{x + 60}" y2="{ly - 9}" stroke="{C_FREE}" stroke-width="7" '
           f'stroke-linecap="round"/>')
     dot(s, x + 30, ly - 9, C_FREE, True, 10)
-    s.text(x + 80, ly, "chấm: chênh lệch; đoạn ngang: khoảng tin cậy 95%", 25, DIM)
-    s.text(60, ly + 56, "Đoạn ngang không cắt vạch 0 nghĩa là chênh lệch đó lớn hơn mức nhiễu của tập câu hỏi.",
-           25, DIM)
+    s.text(x + 80, ly, f["dot"], 25, DIM)
+    s.text(60, ly + 56, f["zero"], 25, DIM)
     return s.render()
 
 
 _RESULT_CACHE: dict = {}
+
+
+def selection_dir(cfg, a) -> Path:
+    """Thư mục select.<tên>.json của mô hình học trong --student, hoặc --seldir nếu có."""
+    from src.common.config import path_of
+    if "student" not in cfg:
+        cfg = load_config(student=a.student)
+    return resolve_path(cfg, a.seldir) if a.seldir else path_of(cfg, "data_stage_b") / f"{cfg['student']['key']}_base"
 
 
 def load_results(cfg, a) -> list[dict]:
@@ -1087,6 +1199,15 @@ FIGURES = {
     "teacher_share": ("fig3_teacher_share", lambda a, cfg: build_teacher_share(load_results(cfg, a), "en")),
     "teacher_share_vi": ("figC2_teacher_share_vi", lambda a, cfg: build_teacher_share(load_results(cfg, a), "vi")),
     "forest": ("figC1_forest_vi", lambda a, cfg: build_forest(load_results(cfg, a))),
+    # Bản tiếng Anh cho báo cáo đồ án viết tiếng Anh (thêm 27/11)
+    "forest_en": ("figC1_forest", lambda a, cfg: build_forest(load_results(cfg, a), "en")),
+    "teacher_mix": ("figC4_teacher_mix", lambda a, cfg: build_teacher_mix(teacher_mix_rows(selection_dir(cfg, a)))),
+    "teachers_en": ("figA2_teachers_en", lambda a, cfg: build_teachers(cfg, a.workdir, "en")),
+    "truncation_en": ("figA3_truncation_en", lambda a, cfg: build_truncation(cfg, a.workdir, "en")),
+    "lengths_en": ("figA4_lengths_en", lambda a, cfg: build_lengths(cfg, a.workdir, "en")),
+    "judge_en": ("figA6_judge_en", lambda a, cfg: build_judge(cfg, a.workdir, "en")),
+    "distance_en": ("figA8_distance_en", lambda a, cfg: build_distance(cfg, a.workdir, "en")),
+    "correlation_en": ("figB1_correlation_en", lambda a, cfg: build_correlation(cfg, a.workdir, a.fit, "en")),
     # Hình 4 của bài (thêm 01/11): tách lợi ích của GRAPE thành phần chọn lời giải quen và phần chọn mô hình dạy
     # Từ 11/11/2026 hình này có hai bảng: đường qua FWT và đường qua Random@GRAPE (cần kết quả random_at_grape.k3)
     "decomposition": ("fig4_decomposition",
@@ -1095,12 +1216,14 @@ FIGURES = {
                          lambda a, cfg: build_decomposition_paths(*load_decomposition_paths(cfg, a), "vi")),
 }
 REPORT = ["teachers", "truncation", "lengths", "judge", "distance", "correlation"]
+REPORT_EN = ["teachers_en", "truncation_en", "lengths_en", "judge_en", "distance_en", "correlation_en"]
+RESULTS_EN = ["forest_en", "teacher_mix"]   # Hình 2, 3, 4 tiếng Anh đã có trong bài báo, không vẽ lại
 RESULTS = ["teacher_share", "teacher_share_vi", "forest", "decomposition", "decomposition_vi"]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("figure", choices=list(FIGURES) + ["all", "report", "results"])
+    ap.add_argument("figure", choices=list(FIGURES) + ["all", "report", "results", "report_en", "results_en"])
     ap.add_argument("--outdir", default="outputs/figures")
     ap.add_argument("--stats", default="data/stage_a/stats.json", help="stats.json cho Hình 2")
     ap.add_argument("--workdir", default="data/stage_a", help="thư mục dữ liệu cho các hình báo cáo")
@@ -1119,6 +1242,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         names = REPORT
     elif args.figure == "results":
         names = RESULTS
+    elif args.figure == "report_en":
+        names = REPORT_EN
+    elif args.figure == "results_en":
+        names = RESULTS_EN
     else:
         names = [args.figure]
     for key in names:

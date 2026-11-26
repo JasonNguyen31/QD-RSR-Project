@@ -365,3 +365,61 @@ def test_decomposition_second_path_refuses_missing_random_at_grape(tmp_path):
 def test_num_never_prints_negative_zero():
     assert mf.num(-0.04, ".", 1, sign=True) == "+0.0"
     assert mf.num(-0.06, ",", 1, sign=True) == "−0,1"
+
+
+# ---------------------------------------------------------------- bản tiếng Anh cho báo cáo đồ án (27/11)
+@pytest.mark.parametrize("fn,needle", [
+    ("build_teachers", "Share of correct solutions"),
+    ("build_truncation", "Share of truncated solutions"),
+    ("build_lengths", "Length of correct solutions"),
+    ("build_judge", "Distribution of judge scores"),
+    ("build_distance", "Median embedding distance"),
+])
+def test_report_figures_have_english_versions(tmp_path, fn, needle):
+    from src.common.config import load_config
+    from src.tools import make_figures as mf
+
+    svg = getattr(mf, fn)(load_config(), str(_stage_a(tmp_path)), "en")
+    ET.fromstring(svg)
+    assert needle in svg
+    for vi in ("mức", "Tỷ lệ", "trung vị", "Cùng mô hình", "chuỗi"):
+        assert vi not in svg, vi
+
+
+def test_correlation_figure_in_english(tmp_path):
+    from src.common.config import load_config
+    from src.tools import make_figures as mf
+
+    svg = mf.build_correlation(load_config(), str(_stage_a(tmp_path)), "fit.test.jsonl", "en")
+    assert "Within-question rank correlation" in svg and "Length" in svg and "Độ dài" not in svg
+
+
+def test_forest_figure_in_english_lists_every_group_present():
+    rows = [{"tag": "grape.k3", "en": "GRAPE", "group": "student", "seeds": 3, "diff": 6.8, "lo": 5.1, "hi": 8.6},
+            {"tag": "rsr.k3", "en": "RSR", "group": "surprise", "seeds": 3, "diff": -2.0, "lo": -3.5, "hi": -0.4}]
+    svg = mf.build_forest(rows, "en")
+    ET.fromstring(svg)
+    for w in ("+6.8", "−2.0", "95% interval", "student familiarity", "student surprisal"):
+        assert w in svg, w
+    assert "teacher-identity control" not in svg      # chú giải chỉ ghi nhóm có mặt trên hình
+
+
+def test_teacher_mix_reads_selection_files(tmp_path):
+    from src.common.io_utils import write_json
+
+    write_json(tmp_path / "select.grape.k3.json", {"teacher_share": {"qwen72b": 0.75, "deepseek": 0.15, "llama70b": 0.10}})
+    write_json(tmp_path / "select.rsr.k3.json", {"teacher_share": {"qwen72b": 0.02, "deepseek": 0.60, "llama70b": 0.38}})
+    rows = mf.teacher_mix_rows(tmp_path)
+    assert {r["tag"] for r in rows} == {"grape.k3", "rsr.k3"}
+    svg = mf.build_teacher_mix(rows, "en")
+    ET.fromstring(svg)
+    assert "Qwen2.5-VL-72B" in svg and ">75<" in svg and svg.index("GRAPE") < svg.index("RSR")
+
+
+def test_teacher_mix_refuses_empty_folder(tmp_path):
+    with pytest.raises(SystemExit):
+        mf.teacher_mix_rows(tmp_path)
+
+
+def test_english_groups_list_existing_figures():
+    assert set(mf.REPORT_EN) <= set(mf.FIGURES) and set(mf.RESULTS_EN) <= set(mf.FIGURES)
